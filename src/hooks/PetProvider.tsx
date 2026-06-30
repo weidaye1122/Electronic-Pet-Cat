@@ -1,0 +1,1544 @@
+import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { defaultInventory } from '../data/defaultInventory'
+import { createDefaultMeta } from '../data/defaultMeta'
+import { feedAnimationOrder, playAnimationOrder } from '../data/feedAnimationConfig'
+import { defaultPet } from '../data/defaultPet'
+import { defaultShopItems } from '../data/defaultShopItems'
+import { defaultTasks } from '../data/defaultTasks'
+import { SLEEP_DURATION_MS } from '../data/petTimings'
+import { levelRules } from '../data/levelRules'
+import type {
+  AppMeta,
+  FeedAnimationId,
+  FeedCycleAnimationId,
+  InventoryState,
+  NewTaskInput,
+  Pet,
+  PersistedAppState,
+  PlayCycleAnimationId,
+  PointRecord,
+  ShopItem,
+  Task,
+  TaskStats,
+  WearableSlot,
+} from '../types'
+import { getDayDifference, getLocalDateKey } from '../utils/date'
+import {
+  calculateLevelFromGrowth,
+  getGrowthProgress,
+  getNextLevelRule,
+  getStageForLevel,
+} from '../utils/level'
+import {
+  clearLocalAppState,
+  loadLocalAppState,
+  loadRemoteAppState,
+  saveLocalAppState,
+  saveRemoteAppState,
+} from '../utils/storage'
+import { PetStoreContext } from './petStoreContext'
+import type { FirstRunSetupInput, LevelUpCelebrationState } from './petStoreContext'
+import { useToast } from './useToast'
+
+type PetStoreData = {
+  pet: Pet
+  tasks: Task[]
+  shopItems: ShopItem[]
+  inventory: InventoryState
+  pointRecords: PointRecord[]
+  meta: AppMeta
+}
+
+const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const HUNGER_DECAY_MS = 2 * 60 * 60 * 1000
+const HUNGER_DECAY_VALUE = 6
+const CLEAN_DECAY_MS = 3 * 60 * 60 * 1000
+const CLEAN_DECAY_VALUE = 5
+const ENERGY_DECAY_MS = 2 * 60 * 60 * 1000
+const ENERGY_DECAY_VALUE = 4
+const LOW_NEED_MOOD_DECAY_MS = 6 * 60 * 60 * 1000
+const LOW_NEED_MOOD_DECAY_VALUE = 3
+const PLAY_MOOD_STAGE_ONE_MS = 12 * 60 * 60 * 1000
+const PLAY_MOOD_STAGE_TWO_MS = 24 * 60 * 60 * 1000
+const PLAY_MOOD_STAGE_ONE_VALUE = 6
+const PLAY_MOOD_STAGE_TWO_VALUE = 8
+const removedShopItemIds = new Set([
+  'pumpkin',
+  'chicken',
+  'toothbrush',
+  'shampoo',
+  'bath-towel',
+  'berry-scarf',
+  'laser-pointer',
+  'paper-box',
+])
+const feedCycleAnimationIdSet = new Set<FeedCycleAnimationId>(feedAnimationOrder)
+const playCycleAnimationIdSet = new Set<PlayCycleAnimationId>(playAnimationOrder)
+const queuedConsumableAnimationIdSet = new Set<FeedAnimationId>([
+  ...feedAnimationOrder,
+  'body-wash',
+  'yarn-ball',
+  'feather-wand',
+])
+let shouldOverwriteRemoteOnNextHydration = false
+
+const clampStat = (value: number, max = 100) => Math.max(0, Math.min(max, Math.round(value)))
+const getMoodMax = (pet: Pet) => {
+  const clothingBonus = pet.currentHat || pet.currentScarf || pet.currentShoes ? 10 : 0
+  const roomBonus = pet.currentBackground && pet.currentBackground !== 'default' ? 10 : 0
+
+  return 80 + clothingBonus + roomBonus
+}
+const isConsumableItemType = (type: ShopItem['type']): type is 'food' | 'toy' | 'care' =>
+  type === 'food' || type === 'toy' || type === 'care'
+const isQueuedConsumableAnimationId = (itemId: string): itemId is FeedAnimationId =>
+  queuedConsumableAnimationIdSet.has(itemId as FeedAnimationId)
+const sanitizeFeedAnimationQueue = (queue: AppMeta['feedAnimationQueue'] | undefined) =>
+  Array.isArray(queue)
+    ? queue.filter((itemId): itemId is FeedAnimationId => isQueuedConsumableAnimationId(itemId))
+    : []
+const getLastFeedCycleItemId = (
+  itemId: AppMeta['lastFeedCycleItemId'] | undefined,
+): FeedCycleAnimationId | '' =>
+  itemId && feedCycleAnimationIdSet.has(itemId as FeedCycleAnimationId)
+    ? (itemId as FeedCycleAnimationId)
+    : ''
+const getLastPlayCycleItemId = (
+  itemId: AppMeta['lastPlayCycleItemId'] | undefined,
+): PlayCycleAnimationId | '' =>
+  itemId && playCycleAnimationIdSet.has(itemId as PlayCycleAnimationId)
+    ? (itemId as PlayCycleAnimationId)
+    : ''
+const getFirstAvailableConsumableItem = (
+  current: PetStoreData,
+  type: 'food' | 'toy' | 'care',
+) =>
+  current.shopItems.find(
+    (item) => item.type === type && (current.inventory.consumables[item.id] ?? 0) > 0,
+  )
+const getConsumableEnergyCost = (item: ShopItem) =>
+  item.type === 'toy' ? Math.max(0, -(item.effect?.energy ?? 0)) : 0
+const canUseConsumableItem = (pet: Pet, item: ShopItem) => pet.energy >= getConsumableEnergyCost(item)
+const getNextFeedCycleItem = (current: PetStoreData) => {
+  const availableFeedIds = feedAnimationOrder.filter(
+    (itemId) => (current.inventory.consumables[itemId] ?? 0) > 0,
+  )
+
+  if (!availableFeedIds.length) {
+    return undefined
+  }
+
+  const availableFeedIdSet = new Set(availableFeedIds)
+  const lastFeedCycleItemId = getLastFeedCycleItemId(current.meta.lastFeedCycleItemId)
+  const startIndex = lastFeedCycleItemId ? feedAnimationOrder.indexOf(lastFeedCycleItemId) : -1
+
+  for (let step = 1; step <= feedAnimationOrder.length; step += 1) {
+    const candidateId =
+      feedAnimationOrder[(startIndex + step + feedAnimationOrder.length) % feedAnimationOrder.length]
+
+    if (!availableFeedIdSet.has(candidateId)) {
+      continue
+    }
+
+    return current.shopItems.find((item) => item.id === candidateId)
+  }
+
+  return current.shopItems.find((item) => item.id === availableFeedIds[0])
+}
+const getNextPlayCycleItem = (current: PetStoreData) => {
+  const availableToyIds = playAnimationOrder.filter((itemId) => {
+    const item = current.shopItems.find((shopItem) => shopItem.id === itemId)
+
+    return Boolean(
+      item &&
+        (current.inventory.consumables[itemId] ?? 0) > 0 &&
+        canUseConsumableItem(current.pet, item),
+    )
+  })
+
+  if (!availableToyIds.length) {
+    return undefined
+  }
+
+  const availableToyIdSet = new Set(availableToyIds)
+  const lastPlayCycleItemId = getLastPlayCycleItemId(current.meta.lastPlayCycleItemId)
+  const startIndex = lastPlayCycleItemId ? playAnimationOrder.indexOf(lastPlayCycleItemId) : -1
+
+  for (let step = 1; step <= playAnimationOrder.length; step += 1) {
+    const candidateId =
+      playAnimationOrder[(startIndex + step + playAnimationOrder.length) % playAnimationOrder.length]
+
+    if (!availableToyIdSet.has(candidateId)) {
+      continue
+    }
+
+    return current.shopItems.find((item) => item.id === candidateId)
+  }
+
+  return current.shopItems.find((item) => item.id === availableToyIds[0])
+}
+
+const createPointRecord = (title: string, change: number): PointRecord => ({
+  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  title,
+  change,
+  createdAt: new Date().toISOString(),
+})
+
+const normalizePet = (pet: Pet): Pet => {
+  const level = calculateLevelFromGrowth(pet.growthValue, levelRules)
+  const normalizedPet = {
+    ...pet,
+    level,
+    stage: getStageForLevel(level).name,
+    points: Math.max(0, Math.round(pet.points)),
+    hunger: clampStat(pet.hunger),
+    clean: clampStat(pet.clean),
+    energy: clampStat(pet.energy),
+    currentHat: pet.currentHat ?? '',
+    currentScarf: pet.currentScarf ?? '',
+    currentShoes: pet.currentShoes ?? '',
+    currentBackground: pet.currentBackground || 'default',
+  }
+  const moodMax = getMoodMax(normalizedPet as Pet)
+
+  return {
+    ...(normalizedPet as Pet),
+    mood: clampStat(pet.mood, moodMax),
+  }
+}
+
+const normalizeShopItemsData = (items: ShopItem[]) => {
+  const currentById = new Map(items.map((item) => [item.id, item]))
+  const normalizedDefaults = defaultShopItems.map((defaultItem) => {
+    const currentItem = currentById.get(defaultItem.id)
+
+    if (!currentItem) {
+      return defaultItem
+    }
+
+    return {
+      ...defaultItem,
+      owned: currentItem.owned,
+    }
+  })
+
+  const knownIds = new Set(defaultShopItems.map((item) => item.id))
+  const customItems = items.filter(
+    (item) => !knownIds.has(item.id) && !removedShopItemIds.has(item.id),
+  )
+
+  return [...normalizedDefaults, ...customItems]
+}
+
+const normalizeInventoryData = (
+  inventory: InventoryState | undefined,
+  shopItems: ShopItem[],
+): InventoryState => {
+  const validItemIds = new Set(shopItems.map((item) => item.id))
+  const validConsumableIds = new Set(
+    shopItems.filter((item) => isConsumableItemType(item.type)).map((item) => item.id),
+  )
+
+  return {
+    consumables: Object.fromEntries(
+      Object.entries(inventory?.consumables ?? {}).filter(
+        ([itemId, quantity]) =>
+          validConsumableIds.has(itemId) && typeof quantity === 'number' && quantity > 0,
+      ),
+    ),
+    ownedItemIds: Array.from(
+      new Set((inventory?.ownedItemIds ?? []).filter((itemId) => validItemIds.has(itemId))),
+    ),
+  }
+}
+
+const normalizePetSelections = (
+  pet: Pet,
+  inventory: InventoryState,
+  shopItems: ShopItem[],
+): Pet => {
+  const ownedItemIds = new Set(inventory.ownedItemIds)
+  const itemById = new Map(shopItems.map((item) => [item.id, item]))
+  const normalizeWearableId = (itemId: string | undefined, wearableSlot: WearableSlot) => {
+    if (!itemId || !ownedItemIds.has(itemId)) {
+      return ''
+    }
+
+    const item = itemById.get(itemId)
+
+    return item?.type === 'clothing' && item.wearableSlot === wearableSlot ? item.id : ''
+  }
+  const currentBackground =
+    pet.currentBackground &&
+    pet.currentBackground !== 'default' &&
+    ownedItemIds.has(pet.currentBackground) &&
+    itemById.get(pet.currentBackground)?.type === 'background'
+      ? pet.currentBackground
+      : 'default'
+
+  return normalizePet({
+    ...pet,
+    currentHat: normalizeWearableId(pet.currentHat, 'hat'),
+    currentScarf: normalizeWearableId(pet.currentScarf, 'scarf'),
+    currentShoes: normalizeWearableId(pet.currentShoes, 'shoes'),
+    currentBackground,
+  })
+}
+
+const normalizeTasksData = (tasks: Task[]) => {
+  const legacyDefaultTaskIds = new Set([
+    'read-book',
+    'bag-clean',
+    'brush-teeth',
+    'say-thanks',
+    'draw-art',
+  ])
+  const placeholderTaskTitles = new Set(['测试'])
+  const currentById = new Map(tasks.map((task) => [task.id, task]))
+  const normalizedDefaults = defaultTasks.map((defaultTask) => {
+    const currentTask = currentById.get(defaultTask.id)
+
+    if (!currentTask) {
+      return defaultTask
+    }
+
+    return {
+      ...defaultTask,
+      status: currentTask.status,
+    }
+  })
+
+  const knownIds = new Set(defaultTasks.map((task) => task.id))
+  const knownTitles = new Set(defaultTasks.map((task) => task.title.trim()))
+  const customTasks = tasks.filter(
+    (task) =>
+      !knownIds.has(task.id) &&
+      !legacyDefaultTaskIds.has(task.id) &&
+      !knownTitles.has(task.title.trim()) &&
+      !placeholderTaskTitles.has(task.title.trim()),
+  )
+
+  return [...normalizedDefaults, ...customTasks]
+}
+
+const normalizeMeta = (meta: AppMeta): AppMeta => {
+  const defaults = createDefaultMeta()
+
+  return {
+    ...defaults,
+    ...meta,
+    userName: typeof meta.userName === 'string' ? meta.userName : defaults.userName,
+    profileAvatar: meta.profileAvatar ?? '',
+    passwordHash: typeof meta.passwordHash === 'string' ? meta.passwordHash : '',
+    passwordSalt: typeof meta.passwordSalt === 'string' ? meta.passwordSalt : '',
+    setupCompletedAt: typeof meta.setupCompletedAt === 'string' ? meta.setupCompletedAt : '',
+    sleepEndAt: typeof meta.sleepEndAt === 'number' ? meta.sleepEndAt : 0,
+    lastHungerDecayAt:
+      typeof meta.lastHungerDecayAt === 'number'
+        ? meta.lastHungerDecayAt
+        : defaults.lastHungerDecayAt,
+    lastCleanDecayAt:
+      typeof meta.lastCleanDecayAt === 'number' ? meta.lastCleanDecayAt : defaults.lastCleanDecayAt,
+    lastEnergyDecayAt:
+      typeof meta.lastEnergyDecayAt === 'number'
+        ? meta.lastEnergyDecayAt
+        : defaults.lastEnergyDecayAt,
+    lastPlayAt: typeof meta.lastPlayAt === 'number' ? meta.lastPlayAt : defaults.lastPlayAt,
+    lastPlayPenaltyStage:
+      typeof meta.lastPlayPenaltyStage === 'number'
+        ? meta.lastPlayPenaltyStage
+        : defaults.lastPlayPenaltyStage,
+    lastLowHungerMoodDecayAt:
+      typeof meta.lastLowHungerMoodDecayAt === 'number'
+        ? meta.lastLowHungerMoodDecayAt
+        : defaults.lastLowHungerMoodDecayAt,
+    lastLowCleanMoodDecayAt:
+      typeof meta.lastLowCleanMoodDecayAt === 'number'
+        ? meta.lastLowCleanMoodDecayAt
+        : defaults.lastLowCleanMoodDecayAt,
+    feedAnimationQueue: sanitizeFeedAnimationQueue(meta.feedAnimationQueue),
+    lastFeedCycleItemId: getLastFeedCycleItemId(meta.lastFeedCycleItemId),
+    lastPlayCycleItemId: getLastPlayCycleItemId(meta.lastPlayCycleItemId),
+  }
+}
+
+const buildDefaultStore = (): PetStoreData => ({
+  pet: normalizePet(defaultPet),
+  tasks: cloneData(defaultTasks),
+  shopItems: cloneData(defaultShopItems),
+  inventory: cloneData(defaultInventory),
+  pointRecords: [],
+  meta: createDefaultMeta(),
+})
+
+const toPersistedAppState = (store: PetStoreData): PersistedAppState => ({
+  pet: store.pet,
+  tasks: store.tasks,
+  shopItems: store.shopItems,
+  inventory: store.inventory,
+  pointRecords: store.pointRecords,
+  meta: store.meta,
+})
+
+const normalizePersistedState = (state: PersistedAppState): PetStoreData => {
+  const shopItems = normalizeShopItemsData(state.shopItems)
+  const inventory = normalizeInventoryData(state.inventory, shopItems)
+
+  return {
+    pet: normalizePetSelections(state.pet, inventory, shopItems),
+    tasks: normalizeTasksData(state.tasks),
+    shopItems,
+    inventory,
+    pointRecords: state.pointRecords,
+    meta: normalizeMeta(state.meta),
+  }
+}
+
+const getInitialStoreUrlOptions = () => {
+  if (typeof window === 'undefined') {
+    return {
+      shouldResetAllData: false,
+      shouldZeroStatusForTest: false,
+    }
+  }
+
+  const searchParams = new URL(window.location.href).searchParams
+
+  return {
+    shouldResetAllData:
+      searchParams.get('reset') === '1' || searchParams.get('reset-data') === '1',
+    shouldZeroStatusForTest: searchParams.get('test-zero-status') === '1',
+  }
+}
+
+const clearInitialStoreUrlOptions = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const nextUrl = new URL(window.location.href)
+  nextUrl.searchParams.delete('reset')
+  nextUrl.searchParams.delete('reset-data')
+  nextUrl.searchParams.delete('test-zero-status')
+  window.history.replaceState({}, '', nextUrl.toString())
+}
+
+const createInitialStore = (): PetStoreData => {
+  const { shouldResetAllData, shouldZeroStatusForTest } = getInitialStoreUrlOptions()
+  const defaultSnapshot = toPersistedAppState(buildDefaultStore())
+
+  if (shouldResetAllData) {
+    clearLocalAppState()
+    shouldOverwriteRemoteOnNextHydration = true
+  }
+
+  const initialSnapshot = shouldResetAllData ? defaultSnapshot : loadLocalAppState(defaultSnapshot)
+  const normalizedInitialState = normalizePersistedState(initialSnapshot)
+  const pet = shouldZeroStatusForTest
+    ? normalizePet({
+        ...normalizedInitialState.pet,
+        hunger: 0,
+        mood: 0,
+        clean: 0,
+        energy: 0,
+      })
+    : normalizedInitialState.pet
+
+  if (shouldResetAllData || shouldZeroStatusForTest) {
+    clearInitialStoreUrlOptions()
+  }
+
+  return autoClaimPendingTaskRewards({
+    pet,
+    tasks: normalizedInitialState.tasks,
+    shopItems: normalizedInitialState.shopItems,
+    inventory: normalizedInitialState.inventory,
+    pointRecords: normalizedInitialState.pointRecords,
+    meta: normalizedInitialState.meta,
+  })
+}
+
+const createTaskStats = (tasks: Task[]): TaskStats => ({
+  total: tasks.length,
+  done: tasks.filter((task) => task.status !== 'todo').length,
+  claimed: tasks.filter((task) => task.status === 'claimed').length,
+  pendingClaim: tasks.filter((task) => task.status === 'done').length,
+})
+
+const getDecayIntervals = (lastAt: number, now: number, stepMs: number) =>
+  Math.max(0, Math.floor((now - lastAt) / stepMs))
+
+const getThresholdCrossedAt = (
+  startValue: number,
+  nextValue: number,
+  threshold: number,
+  decayValue: number,
+  decayStepMs: number,
+  lastDecayAt: number,
+) => {
+  if (startValue < threshold || nextValue >= threshold) {
+    return lastDecayAt
+  }
+
+  const stepsToCross = Math.floor((startValue - threshold) / decayValue) + 1
+  return lastDecayAt + stepsToCross * decayStepMs
+}
+
+const applyConsumableEffectInStore = (
+  current: PetStoreData,
+  item: ShopItem,
+  now = Date.now(),
+) => {
+  const currentQuantity = current.inventory.consumables[item.id] ?? 0
+
+  if (currentQuantity <= 0) {
+    return current
+  }
+
+  const effect = item.effect ?? {}
+  const nextPet = normalizePet({
+    ...current.pet,
+    hunger: current.pet.hunger + (effect.hunger ?? 0),
+    mood: current.pet.mood + (effect.mood ?? 0),
+    clean: current.pet.clean + (effect.clean ?? 0),
+    energy: current.pet.energy + (effect.energy ?? 0),
+  })
+  const queuedFeedAnimations = sanitizeFeedAnimationQueue(current.meta.feedAnimationQueue)
+  const queuedAnimationId = isQueuedConsumableAnimationId(item.id) ? item.id : undefined
+  const shouldQueueConsumableAnimation =
+    (item.type === 'food' || item.type === 'care' || item.type === 'toy') && queuedAnimationId
+
+  return {
+    ...current,
+    inventory: {
+      ...current.inventory,
+      consumables: {
+        ...current.inventory.consumables,
+        [item.id]: currentQuantity - 1,
+      },
+    },
+    pet: nextPet,
+    meta: normalizeMeta({
+      ...current.meta,
+      lastHungerDecayAt: item.type === 'food' ? now : current.meta.lastHungerDecayAt,
+      lastCleanDecayAt: item.type === 'care' ? now : current.meta.lastCleanDecayAt,
+      lastPlayAt: item.type === 'toy' ? now : current.meta.lastPlayAt,
+      lastPlayPenaltyStage: item.type === 'toy' ? 0 : current.meta.lastPlayPenaltyStage,
+      lastLowHungerMoodDecayAt:
+        item.type === 'food' && nextPet.hunger >= 40
+          ? now
+          : current.meta.lastLowHungerMoodDecayAt,
+      lastLowCleanMoodDecayAt:
+        item.type === 'care' && nextPet.clean >= 40 ? now : current.meta.lastLowCleanMoodDecayAt,
+      ...(shouldQueueConsumableAnimation
+        ? {
+            feedAnimationQueue: [...queuedFeedAnimations, queuedAnimationId],
+            ...(item.type === 'food'
+              ? { lastFeedCycleItemId: item.id as FeedCycleAnimationId }
+              : {}),
+            ...(item.type === 'toy'
+              ? { lastPlayCycleItemId: item.id as PlayCycleAnimationId }
+              : {}),
+          }
+        : {}),
+    }),
+  }
+}
+
+const applyPassiveDecayInStore = (current: PetStoreData, now = Date.now()) => {
+  const baseMeta = normalizeMeta(current.meta)
+  let nextMeta = baseMeta
+  let nextPet = current.pet
+  let changed = false
+
+  const hungerDecayCount = getDecayIntervals(baseMeta.lastHungerDecayAt ?? now, now, HUNGER_DECAY_MS)
+  if (hungerDecayCount > 0) {
+    const hungerBefore = nextPet.hunger
+    const hungerAfter = hungerBefore - hungerDecayCount * HUNGER_DECAY_VALUE
+    const hungerCrossedAt = getThresholdCrossedAt(
+      hungerBefore,
+      hungerAfter,
+      40,
+      HUNGER_DECAY_VALUE,
+      HUNGER_DECAY_MS,
+      baseMeta.lastHungerDecayAt ?? now,
+    )
+
+    nextPet = {
+      ...nextPet,
+      hunger: hungerAfter,
+    }
+    nextMeta = {
+      ...nextMeta,
+      lastHungerDecayAt: (baseMeta.lastHungerDecayAt ?? now) + hungerDecayCount * HUNGER_DECAY_MS,
+      lastLowHungerMoodDecayAt:
+        hungerBefore >= 40 && hungerAfter < 40
+          ? hungerCrossedAt
+          : hungerAfter >= 40
+            ? now
+            : nextMeta.lastLowHungerMoodDecayAt,
+    }
+    changed = true
+  } else if (nextPet.hunger >= 40 && nextMeta.lastLowHungerMoodDecayAt !== now) {
+    nextMeta = {
+      ...nextMeta,
+      lastLowHungerMoodDecayAt: now,
+    }
+  }
+
+  const cleanDecayCount = getDecayIntervals(baseMeta.lastCleanDecayAt ?? now, now, CLEAN_DECAY_MS)
+  if (cleanDecayCount > 0) {
+    const cleanBefore = nextPet.clean
+    const cleanAfter = cleanBefore - cleanDecayCount * CLEAN_DECAY_VALUE
+    const cleanCrossedAt = getThresholdCrossedAt(
+      cleanBefore,
+      cleanAfter,
+      40,
+      CLEAN_DECAY_VALUE,
+      CLEAN_DECAY_MS,
+      baseMeta.lastCleanDecayAt ?? now,
+    )
+
+    nextPet = {
+      ...nextPet,
+      clean: cleanAfter,
+    }
+    nextMeta = {
+      ...nextMeta,
+      lastCleanDecayAt: (baseMeta.lastCleanDecayAt ?? now) + cleanDecayCount * CLEAN_DECAY_MS,
+      lastLowCleanMoodDecayAt:
+        cleanBefore >= 40 && cleanAfter < 40
+          ? cleanCrossedAt
+          : cleanAfter >= 40
+            ? now
+            : nextMeta.lastLowCleanMoodDecayAt,
+    }
+    changed = true
+  } else if (nextPet.clean >= 40 && nextMeta.lastLowCleanMoodDecayAt !== now) {
+    nextMeta = {
+      ...nextMeta,
+      lastLowCleanMoodDecayAt: now,
+    }
+  }
+
+  const energyDecayCount = getDecayIntervals(baseMeta.lastEnergyDecayAt ?? now, now, ENERGY_DECAY_MS)
+  if (energyDecayCount > 0) {
+    nextPet = {
+      ...nextPet,
+      energy: nextPet.energy - energyDecayCount * ENERGY_DECAY_VALUE,
+    }
+    nextMeta = {
+      ...nextMeta,
+      lastEnergyDecayAt: (baseMeta.lastEnergyDecayAt ?? now) + energyDecayCount * ENERGY_DECAY_MS,
+    }
+    changed = true
+  }
+
+  if (nextPet.hunger < 40) {
+    const lowHungerMoodDecayCount = getDecayIntervals(
+      nextMeta.lastLowHungerMoodDecayAt ?? now,
+      now,
+      LOW_NEED_MOOD_DECAY_MS,
+    )
+
+    if (lowHungerMoodDecayCount > 0) {
+      nextPet = {
+        ...nextPet,
+        mood: nextPet.mood - lowHungerMoodDecayCount * LOW_NEED_MOOD_DECAY_VALUE,
+      }
+      nextMeta = {
+        ...nextMeta,
+        lastLowHungerMoodDecayAt:
+          (nextMeta.lastLowHungerMoodDecayAt ?? now) +
+          lowHungerMoodDecayCount * LOW_NEED_MOOD_DECAY_MS,
+      }
+      changed = true
+    }
+  }
+
+  if (nextPet.clean < 40) {
+    const lowCleanMoodDecayCount = getDecayIntervals(
+      nextMeta.lastLowCleanMoodDecayAt ?? now,
+      now,
+      LOW_NEED_MOOD_DECAY_MS,
+    )
+
+    if (lowCleanMoodDecayCount > 0) {
+      nextPet = {
+        ...nextPet,
+        mood: nextPet.mood - lowCleanMoodDecayCount * LOW_NEED_MOOD_DECAY_VALUE,
+      }
+      nextMeta = {
+        ...nextMeta,
+        lastLowCleanMoodDecayAt:
+          (nextMeta.lastLowCleanMoodDecayAt ?? now) +
+          lowCleanMoodDecayCount * LOW_NEED_MOOD_DECAY_MS,
+      }
+      changed = true
+    }
+  }
+
+  const noPlayElapsed = now - (baseMeta.lastPlayAt ?? now)
+  const targetPlayPenaltyStage =
+    noPlayElapsed >= PLAY_MOOD_STAGE_TWO_MS
+      ? 2
+      : noPlayElapsed >= PLAY_MOOD_STAGE_ONE_MS
+        ? 1
+        : 0
+
+  if ((baseMeta.lastPlayPenaltyStage ?? 0) < targetPlayPenaltyStage) {
+    let playPenalty = 0
+
+    if ((baseMeta.lastPlayPenaltyStage ?? 0) < 1 && targetPlayPenaltyStage >= 1) {
+      playPenalty += PLAY_MOOD_STAGE_ONE_VALUE
+    }
+
+    if ((baseMeta.lastPlayPenaltyStage ?? 0) < 2 && targetPlayPenaltyStage >= 2) {
+      playPenalty += PLAY_MOOD_STAGE_TWO_VALUE
+    }
+
+    nextPet = {
+      ...nextPet,
+      mood: nextPet.mood - playPenalty,
+    }
+    nextMeta = {
+      ...nextMeta,
+      lastPlayPenaltyStage: targetPlayPenaltyStage,
+    }
+    changed = true
+  }
+
+  if (!changed) {
+    return current
+  }
+
+  return {
+    ...current,
+    pet: normalizePet(nextPet),
+    meta: normalizeMeta(nextMeta),
+  }
+}
+
+const applyGrowthRewards = (pet: Pet, growthDelta: number) => {
+  const previousLevel = pet.level
+  const leveledPet = normalizePet({
+    ...pet,
+    growthValue: pet.growthValue + growthDelta,
+  })
+  const gainedLevels = leveledPet.level - previousLevel
+
+  if (gainedLevels <= 0) {
+    return {
+      pet: leveledPet,
+      records: [] as PointRecord[],
+    }
+  }
+
+  const bonusPoints = gainedLevels * 20
+
+  return {
+    pet: normalizePet({
+      ...leveledPet,
+      points: leveledPet.points + bonusPoints,
+      mood: leveledPet.mood + gainedLevels * 10,
+    }),
+    records: [createPointRecord(`升级奖励 Lv.${leveledPet.level}`, bonusPoints)],
+  }
+}
+
+const claimTaskRewardInStore = (current: PetStoreData, taskId: string) => {
+  const activeTask = current.tasks.find((item) => item.id === taskId)
+
+  if (!activeTask || activeTask.status !== 'done') {
+    return current
+  }
+
+  const rewardedPet = normalizePet({
+    ...current.pet,
+    points: current.pet.points + activeTask.points,
+    mood: current.pet.mood + 5,
+  })
+  const growthResult = applyGrowthRewards(rewardedPet, activeTask.growth)
+
+  return {
+    ...current,
+    pet: growthResult.pet,
+    tasks: current.tasks.map((item) =>
+      item.id === taskId ? { ...item, status: 'claimed' as const } : item,
+    ),
+    pointRecords: [
+      createPointRecord(`${activeTask.title} 领取奖励`, activeTask.points),
+      ...growthResult.records,
+      ...current.pointRecords,
+    ].slice(0, 24),
+  }
+}
+
+const completeTaskAndClaimRewardInStore = (current: PetStoreData, taskId: string) => {
+  const activeTask = current.tasks.find((item) => item.id === taskId)
+
+  if (!activeTask || activeTask.status !== 'todo') {
+    return current
+  }
+
+  return claimTaskRewardInStore(
+    {
+      ...current,
+      tasks: current.tasks.map((item) =>
+        item.id === taskId ? { ...item, status: 'done' as const } : item,
+      ),
+    },
+    taskId,
+  )
+}
+
+const autoClaimPendingTaskRewards = (current: PetStoreData) =>
+  current.tasks.reduce(
+    (nextStore, task) =>
+      task.status === 'done' ? claimTaskRewardInStore(nextStore, task.id) : nextStore,
+    current,
+  )
+
+const finishSleepInStore = (current: PetStoreData, now = Date.now()) => {
+  if (!current.meta.sleepEndAt || current.meta.sleepEndAt > now) {
+    return current
+  }
+
+  return {
+    ...current,
+    pet: normalizePet({
+      ...current.pet,
+      energy: current.pet.energy + 10,
+    }),
+    meta: normalizeMeta({
+      ...current.meta,
+      sleepEndAt: 0,
+      lastEnergyDecayAt: now,
+    }),
+  }
+}
+
+const applyDailyRefresh = (current: PetStoreData) => {
+  const today = getLocalDateKey()
+  const messages: string[] = []
+  let changed = false
+  let nextPet = current.pet
+  let nextTasks = current.tasks
+  let nextMeta = current.meta
+
+  if (current.meta.lastTaskRefreshDate !== today) {
+    nextTasks = current.tasks.map((task) =>
+      task.status === 'todo' ? task : { ...task, status: 'todo' as const },
+    )
+    nextMeta = { ...nextMeta, lastTaskRefreshDate: today }
+    changed = true
+
+    if (current.meta.lastTaskRefreshDate) {
+      messages.push('新的一天开始啦，今日任务已经准备好啦！')
+    }
+  }
+
+  if (current.meta.lastLoginRewardDate !== today) {
+    const dayDifference = getDayDifference(current.meta.lastLoginRewardDate, today)
+    const streakCount =
+      current.meta.lastLoginRewardDate && dayDifference === 1
+        ? current.meta.streakCount + 1
+        : 1
+
+    nextMeta = {
+      ...nextMeta,
+      lastLoginRewardDate: today,
+      streakCount,
+    }
+    changed = true
+    messages.push(
+      streakCount > 1
+        ? `欢迎回来！已经连续陪伴 ${streakCount} 天啦`
+        : '今天也来陪小猫啦！',
+    )
+  }
+
+  if (current.meta.lastActiveDate !== today) {
+    nextMeta = { ...nextMeta, lastActiveDate: today }
+    changed = true
+  }
+
+  if (!changed) {
+    return { nextStore: current, messages }
+  }
+
+  return {
+    nextStore: {
+      ...current,
+      pet: nextPet,
+      tasks: nextTasks,
+      pointRecords: current.pointRecords,
+      meta: nextMeta,
+    },
+    messages,
+  }
+}
+
+export const PetProvider = ({ children }: { children: ReactNode }) => {
+  const [store, setStore] = useState<PetStoreData>(createInitialStore)
+  const [hasHydratedRemoteStore, setHasHydratedRemoteStore] = useState(false)
+  const [isSessionUnlocked, setIsSessionUnlocked] = useState(false)
+  const [levelUpCelebration, setLevelUpCelebration] = useState<LevelUpCelebrationState | null>(
+    null,
+  )
+  const storeRef = useRef(store)
+  const didRunDailyRefreshRef = useRef(false)
+  const shouldOverwriteRemoteOnHydrateRef = useRef(shouldOverwriteRemoteOnNextHydration)
+  const remoteSaveTimerRef = useRef<number | null>(null)
+  const levelUpCelebrationTimerRef = useRef<number | null>(null)
+  const { showToast } = useToast()
+
+  const triggerLevelUpCelebration = (level: number) => {
+    if (levelUpCelebrationTimerRef.current) {
+      window.clearTimeout(levelUpCelebrationTimerRef.current)
+    }
+
+    setLevelUpCelebration({
+      level,
+      token: Date.now(),
+    })
+
+    levelUpCelebrationTimerRef.current = window.setTimeout(() => {
+      levelUpCelebrationTimerRef.current = null
+      setLevelUpCelebration(null)
+    }, 10_000)
+  }
+
+  const commitStore = (updater: (current: PetStoreData) => PetStoreData) => {
+    const next = updater(storeRef.current)
+    storeRef.current = next
+    setStore(next)
+    return next
+  }
+
+  useEffect(() => {
+    storeRef.current = store
+    saveLocalAppState(toPersistedAppState(store))
+  }, [store])
+
+  useEffect(
+    () => () => {
+      if (levelUpCelebrationTimerRef.current) {
+        window.clearTimeout(levelUpCelebrationTimerRef.current)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    let isCancelled = false
+
+    const hydrateRemoteStore = async () => {
+      try {
+        if (shouldOverwriteRemoteOnHydrateRef.current) {
+          await saveRemoteAppState(toPersistedAppState(storeRef.current))
+          return
+        }
+
+        const remoteState = await loadRemoteAppState()
+
+        if (isCancelled) {
+          return
+        }
+
+        if (remoteState) {
+          const nextStore = autoClaimPendingTaskRewards(normalizePersistedState(remoteState))
+          storeRef.current = nextStore
+          setStore(nextStore)
+        } else {
+          await saveRemoteAppState(toPersistedAppState(storeRef.current))
+        }
+      } catch {
+        // Fallback to the browser cache when the backend is not available yet.
+      } finally {
+        if (!isCancelled) {
+          shouldOverwriteRemoteOnNextHydration = false
+          shouldOverwriteRemoteOnHydrateRef.current = false
+          setHasHydratedRemoteStore(true)
+        }
+      }
+    }
+
+    void hydrateRemoteStore()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasHydratedRemoteStore) {
+      return
+    }
+
+    if (remoteSaveTimerRef.current) {
+      window.clearTimeout(remoteSaveTimerRef.current)
+    }
+
+    remoteSaveTimerRef.current = window.setTimeout(() => {
+      remoteSaveTimerRef.current = null
+      void saveRemoteAppState(toPersistedAppState(storeRef.current)).catch(() => {
+        // Keep the local cache as the last-resort fallback if the backend save fails.
+      })
+    }, 220)
+
+    return () => {
+      if (remoteSaveTimerRef.current) {
+        window.clearTimeout(remoteSaveTimerRef.current)
+        remoteSaveTimerRef.current = null
+      }
+    }
+  }, [hasHydratedRemoteStore, store])
+
+  useEffect(() => {
+    if (!hasHydratedRemoteStore || !isSessionUnlocked || didRunDailyRefreshRef.current) {
+      return
+    }
+
+    didRunDailyRefreshRef.current = true
+    const { nextStore, messages } = applyDailyRefresh(storeRef.current)
+
+    if (nextStore !== storeRef.current) {
+      commitStore(() => nextStore)
+    }
+
+    messages.forEach((message, index) => {
+      window.setTimeout(() => showToast(message), index * 260)
+    })
+  }, [hasHydratedRemoteStore, isSessionUnlocked, showToast])
+
+  useEffect(() => {
+    if (!hasHydratedRemoteStore || !isSessionUnlocked) {
+      return
+    }
+
+    const syncPassiveSystems = () => {
+      const nextStore = applyPassiveDecayInStore(storeRef.current)
+
+      if (nextStore !== storeRef.current) {
+        commitStore(() => nextStore)
+      }
+    }
+
+    syncPassiveSystems()
+    const intervalId = window.setInterval(syncPassiveSystems, 60_000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [hasHydratedRemoteStore, isSessionUnlocked])
+
+  useEffect(() => {
+    if (!hasHydratedRemoteStore || !isSessionUnlocked) {
+      return
+    }
+
+    const tryFinishSleep = () => {
+      const nextStore = finishSleepInStore(storeRef.current)
+
+      if (nextStore === storeRef.current) {
+        return false
+      }
+
+      commitStore(() => nextStore)
+      showToast('睡醒啦，体力恢复了 10 点！')
+      return true
+    }
+
+    if (!store.meta.sleepEndAt) {
+      return
+    }
+
+    const remainingMs = store.meta.sleepEndAt - Date.now()
+
+    if (remainingMs <= 0) {
+      tryFinishSleep()
+      return
+    }
+
+    const timerId = window.setTimeout(() => {
+      tryFinishSleep()
+    }, remainingMs)
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [hasHydratedRemoteStore, isSessionUnlocked, store.meta.sleepEndAt, showToast])
+
+  const performCareAction = (action: 'feed' | 'wash' | 'play' | 'sleep') => {
+    if (action === 'sleep') {
+      const now = Date.now()
+      const currentSleepEndAt = storeRef.current.meta.sleepEndAt ?? 0
+
+      if (currentSleepEndAt && currentSleepEndAt <= now) {
+        const finishedStore = finishSleepInStore(storeRef.current, now)
+
+        if (finishedStore !== storeRef.current) {
+          commitStore(() => finishedStore)
+          showToast('睡醒啦，体力恢复了 10 点！')
+        }
+      }
+
+      if (currentSleepEndAt > now) {
+        const remainingSeconds = Math.ceil((currentSleepEndAt - now) / 1000)
+        showToast(`还在睡觉哦，再等 ${remainingSeconds} 秒。`)
+        return
+      }
+
+      commitStore((current) => ({
+        ...current,
+        meta: normalizeMeta({
+          ...current.meta,
+          sleepEndAt: now + SLEEP_DURATION_MS,
+        }),
+      }))
+
+      showToast('已经睡下啦，1 分钟后恢复 10 点体力！')
+      return
+    }
+
+    if (action === 'wash') {
+      const careItem = getFirstAvailableConsumableItem(storeRef.current, 'care')
+
+      if (careItem) {
+        commitStore((current) => applyConsumableEffectInStore(current, careItem))
+
+        showToast(`用了${careItem.name}，小猫洗香香啦！`)
+        return
+      }
+
+      showToast('先去商店买点用品，再来洗香香吧！')
+      return
+    }
+
+    if (action === 'feed') {
+      const foodItem = getNextFeedCycleItem(storeRef.current)
+
+      if (!foodItem) {
+        showToast('先去商店买点食物，再来喂小猫吧！')
+        return
+      }
+
+      commitStore((current) => applyConsumableEffectInStore(current, foodItem))
+
+      showToast(`用了${foodItem.name}，小猫吃得香香的！`)
+      return
+    }
+
+    if (action === 'play') {
+      const toyItem = getNextPlayCycleItem(storeRef.current)
+
+      if (!toyItem) {
+        if (getFirstAvailableConsumableItem(storeRef.current, 'toy')) {
+          showToast('体力不够啦，先睡一觉再陪它玩吧！')
+          return
+        }
+
+        showToast('先去商店买点玩具，再来陪它玩吧！')
+        return
+      }
+
+      commitStore((current) => applyConsumableEffectInStore(current, toyItem))
+
+      showToast(`用了${toyItem.name}，小猫玩得可开心啦！`)
+      return
+    }
+  }
+
+  const markTaskDone = (taskId: string) => {
+    const task = storeRef.current.tasks.find((item) => item.id === taskId)
+
+    if (!task) {
+      return
+    }
+
+    if (task.status === 'done') {
+      showToast('这个任务的奖励已经准备好啦。')
+      return
+    }
+
+    if (task.status === 'claimed') {
+      showToast('这个任务的奖励已经拿到啦！')
+      return
+    }
+
+    const previousLevel = storeRef.current.pet.level
+    const nextStore = commitStore((current) => completeTaskAndClaimRewardInStore(current, taskId))
+
+    showToast(`太棒啦！自动收到 ${task.points} 积分和 ${task.growth} 成长值`)
+
+    if (nextStore.pet.level > previousLevel) {
+      showToast(`升级啦！现在是 Lv.${nextStore.pet.level}`)
+      triggerLevelUpCelebration(nextStore.pet.level)
+    }
+  }
+
+  const claimTaskReward = (taskId: string) => {
+    const task = storeRef.current.tasks.find((item) => item.id === taskId)
+
+    if (!task) {
+      return
+    }
+
+    if (task.status === 'todo') {
+      showToast('先点一下“我完成啦”，再来领取奖励吧。')
+      return
+    }
+
+    if (task.status === 'claimed') {
+      showToast('这个奖励已经领到啦！')
+      return
+    }
+
+    const previousLevel = storeRef.current.pet.level
+    const nextStore = commitStore((current) => claimTaskRewardInStore(current, taskId))
+
+    showToast(`奖励收到啦！获得 ${task.points} 积分和 ${task.growth} 成长值`)
+
+    if (nextStore.pet.level > previousLevel) {
+      showToast(`升级啦！现在是 Lv.${nextStore.pet.level}`)
+      triggerLevelUpCelebration(nextStore.pet.level)
+    }
+  }
+
+  const addCustomTask = (task: NewTaskInput) => {
+    const title = task.title.trim()
+    const points = Math.max(1, Math.round(task.points))
+    const growth = Math.max(1, Math.round(task.growth))
+
+    if (!title) {
+      showToast('先给新任务起个名字吧。')
+      return
+    }
+
+    commitStore((current) => ({
+      ...current,
+      tasks: [
+        {
+          id: `custom-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          title,
+          icon: task.icon?.trim() || '✨',
+          points,
+          growth,
+          status: 'todo',
+        },
+        ...current.tasks,
+      ],
+    }))
+
+    showToast(`新任务“${title}”已经加进今日任务啦！`)
+  }
+
+  const purchaseItem = (itemId: string) => {
+    const item = storeRef.current.shopItems.find((shopItem) => shopItem.id === itemId)
+
+    if (!item) {
+      return
+    }
+
+    if (storeRef.current.pet.points < item.price) {
+      showToast('积分不够哦，再完成几个任务吧！')
+      return
+    }
+
+    if (
+      !isConsumableItemType(item.type) &&
+      storeRef.current.inventory.ownedItemIds.includes(item.id)
+    ) {
+      showToast('这个礼物已经在背包里啦！')
+      return
+    }
+
+    commitStore((current) => {
+      const nextInventory = {
+        ...current.inventory,
+        consumables: { ...current.inventory.consumables },
+        ownedItemIds: [...current.inventory.ownedItemIds],
+      }
+
+      if (isConsumableItemType(item.type)) {
+        nextInventory.consumables[item.id] = (nextInventory.consumables[item.id] ?? 0) + 1
+      }
+
+      if (!nextInventory.ownedItemIds.includes(item.id)) {
+        nextInventory.ownedItemIds.push(item.id)
+      }
+
+      return {
+        ...current,
+        pet: normalizePet({ ...current.pet, points: current.pet.points - item.price }),
+        inventory: nextInventory,
+        shopItems:
+          isConsumableItemType(item.type)
+            ? current.shopItems
+            : current.shopItems.map((shopItem) =>
+                shopItem.id === item.id ? { ...shopItem, owned: true } : shopItem,
+              ),
+        pointRecords: [
+          createPointRecord(`兑换 ${item.name}`, -item.price),
+          ...current.pointRecords,
+        ].slice(0, 24),
+      }
+    })
+
+    showToast(
+      isConsumableItemType(item.type)
+        ? `${item.name} 已经放进背包啦！`
+        : `${item.name} 兑换成功，快去背包看看吧！`,
+    )
+  }
+
+  const applyInventoryItem = (itemId: string) => {
+    const item = storeRef.current.shopItems.find((shopItem) => shopItem.id === itemId)
+
+    if (!item) {
+      return
+    }
+
+    if (isConsumableItemType(item.type)) {
+      const quantity = storeRef.current.inventory.consumables[item.id] ?? 0
+
+      if (quantity <= 0) {
+        showToast('背包里还没有这个道具哦。')
+        return
+      }
+
+      if (!canUseConsumableItem(storeRef.current.pet, item)) {
+        showToast('体力不够啦，先睡一觉再来玩吧！')
+        return
+      }
+
+      commitStore((current) => applyConsumableEffectInStore(current, item))
+
+      const consumableToastMap = {
+        food: '小猫吃得香香的！',
+        toy: '小猫玩得咕噜咕噜转圈圈！',
+        care: `用了${item.name}，小猫变得干干净净啦！`,
+      } as const
+
+      showToast(consumableToastMap[item.type])
+      return
+    }
+
+    if (!storeRef.current.inventory.ownedItemIds.includes(item.id)) {
+      showToast('先去商店把这个礼物带回家吧！')
+      return
+    }
+
+    commitStore((current) => {
+      if (item.type === 'background') {
+        return {
+          ...current,
+          pet: normalizePet({
+            ...current.pet,
+            currentBackground: current.pet.currentBackground === item.id ? 'default' : item.id,
+          }),
+        }
+      }
+
+      if (item.type === 'clothing' && item.wearableSlot === 'hat') {
+        return {
+          ...current,
+          pet: normalizePet({
+            ...current.pet,
+            currentHat: current.pet.currentHat === item.id ? '' : item.id,
+          }),
+        }
+      }
+
+      if (item.type === 'clothing' && item.wearableSlot === 'scarf') {
+        return {
+          ...current,
+          pet: normalizePet({
+            ...current.pet,
+            currentScarf: current.pet.currentScarf === item.id ? '' : item.id,
+          }),
+        }
+      }
+
+      if (item.type === 'clothing' && item.wearableSlot === 'shoes') {
+        return {
+          ...current,
+          pet: normalizePet({
+            ...current.pet,
+            currentShoes: current.pet.currentShoes === item.id ? '' : item.id,
+          }),
+        }
+      }
+
+      return current
+    })
+
+    const isRemovingBackground = item.type === 'background' && storeRef.current.pet.currentBackground === 'default'
+    const isRemovingHat = item.wearableSlot === 'hat' && storeRef.current.pet.currentHat === ''
+    const isRemovingScarf = item.wearableSlot === 'scarf' && storeRef.current.pet.currentScarf === ''
+    const isRemovingShoes = item.wearableSlot === 'shoes' && storeRef.current.pet.currentShoes === ''
+    const isRemovingClothing = isRemovingHat || isRemovingScarf || isRemovingShoes
+
+    showToast(
+      item.type === 'background'
+        ? isRemovingBackground
+          ? '已经恢复成默认房间啦！'
+          : `${item.name} 已经布置好啦！`
+        : isRemovingClothing
+          ? `${item.name} 已经脱下来啦！`
+          : `${item.name} 穿上之后更可爱啦！`,
+    )
+  }
+
+  const consumeNextFeedAnimation = () => {
+    commitStore((current) => {
+      const feedAnimationQueue = sanitizeFeedAnimationQueue(current.meta.feedAnimationQueue)
+
+      if (!feedAnimationQueue.length) {
+        return current
+      }
+
+      return {
+        ...current,
+        meta: normalizeMeta({
+          ...current.meta,
+          feedAnimationQueue: feedAnimationQueue.slice(1),
+        }),
+      }
+    })
+  }
+
+  const resetAllData = () => {
+    clearLocalAppState()
+    const next = buildDefaultStore()
+    storeRef.current = next
+    setStore(next)
+    setIsSessionUnlocked(false)
+    if (hasHydratedRemoteStore) {
+      void saveRemoteAppState(toPersistedAppState(next)).catch(() => {
+        // The browser cache already holds the reset state even if the backend is offline.
+      })
+    }
+    showToast('已经回到和小猫第一次见面的那一天啦！')
+  }
+
+  const completeFirstRunSetup = ({
+    passwordHash,
+    passwordSalt,
+    petName,
+    userName,
+  }: FirstRunSetupInput) => {
+    commitStore((current) => ({
+      ...current,
+      pet: normalizePet({
+        ...current.pet,
+        name: petName,
+      }),
+      meta: normalizeMeta({
+        ...current.meta,
+        passwordHash,
+        passwordSalt,
+        setupCompletedAt: new Date().toISOString(),
+        userName,
+      }),
+    }))
+    setIsSessionUnlocked(true)
+    showToast('小家已经准备好啦！')
+  }
+
+  const unlockSession = () => {
+    setIsSessionUnlocked(true)
+  }
+
+  const setProfileAvatar = (avatarDataUrl: string) => {
+    commitStore((current) => ({
+      ...current,
+      meta: normalizeMeta({
+        ...current.meta,
+        profileAvatar: avatarDataUrl,
+      }),
+    }))
+
+    showToast('头像已经换好啦！')
+  }
+
+  const growthProgress = getGrowthProgress(store.pet.growthValue, store.pet.level, levelRules)
+  const nextLevelRule = getNextLevelRule(store.pet.level, levelRules)
+  const inventoryItems = store.shopItems.filter((item) => {
+    if (!store.inventory.ownedItemIds.includes(item.id)) {
+      return false
+    }
+
+    if (isConsumableItemType(item.type)) {
+      return (store.inventory.consumables[item.id] ?? 0) > 0
+    }
+
+    return true
+  })
+  const currentBackgroundItem = store.shopItems.find(
+    (item) => item.id === store.pet.currentBackground,
+  )
+  const equippedHatItem = store.shopItems.find((item) => item.id === store.pet.currentHat)
+  const equippedScarfItem = store.shopItems.find((item) => item.id === store.pet.currentScarf)
+  const equippedShoesItem = store.shopItems.find((item) => item.id === store.pet.currentShoes)
+  const moodMax = getMoodMax(store.pet)
+  const lowStatusHints = [
+    store.pet.hunger < 40 ? '小猫有点饿啦，喂一喂会更开心。' : '',
+    store.pet.clean < 40 ? '小猫想洗香香，泡泡时间到啦。' : '',
+    store.pet.energy < 40 ? '小猫有点累了，先轻轻陪它休息一下吧。' : '',
+    store.pet.mood < 40 ? '小猫想被你陪一会儿，玩耍会让它开心起来。' : '',
+  ].filter(Boolean)
+  const taskStats = createTaskStats(store.tasks)
+  const todayTip =
+    lowStatusHints[0] ??
+    (taskStats.pendingClaim > 0
+      ? `今天有 ${taskStats.pendingClaim} 个奖励在等你领取。`
+      : taskStats.claimed === taskStats.total
+        ? '今天的任务奖励都已经收好啦，去商店看看新礼物吧！'
+        : store.meta.streakCount > 1
+          ? `已经连续陪伴 ${store.meta.streakCount} 天啦，小猫越来越信任你了。`
+          : '先完成一个小任务，小猫会更开心哦。')
+
+  return (
+    <PetStoreContext.Provider
+      value={{
+        pet: store.pet,
+        tasks: store.tasks,
+        shopItems: store.shopItems,
+        inventory: store.inventory,
+        inventoryItems,
+        pointRecords: store.pointRecords,
+        meta: store.meta,
+        moodMax,
+        growthProgress,
+        nextLevelRule,
+        currentBackgroundItem,
+        equippedHatItem,
+        equippedScarfItem,
+        equippedShoesItem,
+        lowStatusHints,
+        todayTip,
+        taskStats,
+        levelUpCelebration,
+        isStoreReady: hasHydratedRemoteStore,
+        isSessionUnlocked,
+        performCareAction,
+        markTaskDone,
+        claimTaskReward,
+        addCustomTask,
+        purchaseItem,
+        applyInventoryItem,
+        consumeNextFeedAnimation,
+        completeFirstRunSetup,
+        unlockSession,
+        setProfileAvatar,
+        resetAllData,
+      }}
+    >
+      {children}
+    </PetStoreContext.Provider>
+  )
+}

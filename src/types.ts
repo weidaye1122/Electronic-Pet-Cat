@@ -51,7 +51,11 @@ export type AppMeta = {
   lastLoginRewardDate: string
   lastTaskRefreshDate: string
   streakCount: number
+  userName: string
   profileAvatar?: string
+  passwordHash?: string
+  passwordSalt?: string
+  setupCompletedAt?: string
   sleepEndAt?: number
   lastHungerDecayAt?: number
   lastCleanDecayAt?: number

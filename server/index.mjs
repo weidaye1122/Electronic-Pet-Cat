@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { dirname, extname, join, resolve } from 'node:path'
+import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -8,6 +8,7 @@ const projectRoot = resolve(__dirname, '..')
 const staticDir = resolve(process.env.STATIC_DIR || join(projectRoot, 'dist'))
 const dataFile = resolve(process.env.PET_DATA_FILE || join(projectRoot, 'data', 'pet-state.json'))
 const port = Number(process.env.PORT || 4173)
+const host = process.env.HOST || '0.0.0.0'
 const maxBodyBytes = 10 * 1024 * 1024
 
 const mimeTypes = {
@@ -38,6 +39,24 @@ const sendJson = (response, statusCode, payload) => {
 
 const ensureDataDir = async () => {
   await mkdir(dirname(dataFile), { recursive: true })
+}
+
+const isInsideDirectory = (parentPath, childPath) => {
+  const relativePath = relative(parentPath, childPath)
+
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+}
+
+const formatHostForUrl = (value) => {
+  if (value === '0.0.0.0') {
+    return '127.0.0.1'
+  }
+
+  if (value === '::') {
+    return '[::1]'
+  }
+
+  return value.includes(':') && !value.startsWith('[') ? `[${value}]` : value
 }
 
 const readRequestBody = async (request) =>
@@ -122,10 +141,20 @@ const handleStateRequest = async (request, response) => {
 }
 
 const serveStaticFile = async (requestPath, response) => {
-  const safeRelativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\/+/, '')
+  let decodedRequestPath = requestPath
+
+  try {
+    decodedRequestPath = decodeURIComponent(requestPath)
+  } catch {
+    sendJson(response, 400, { message: 'invalid_request_path' })
+    return
+  }
+
+  const safeRelativePath =
+    decodedRequestPath === '/' ? 'index.html' : decodedRequestPath.replace(/^\/+/, '')
   const filePath = resolve(staticDir, safeRelativePath)
 
-  if (!filePath.startsWith(staticDir)) {
+  if (!isInsideDirectory(staticDir, filePath)) {
     sendJson(response, 403, { message: 'forbidden' })
     return
   }
@@ -151,6 +180,11 @@ const serveStaticFile = async (requestPath, response) => {
     })
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      if (extname(safeRelativePath)) {
+        sendJson(response, 404, { message: 'static_asset_not_found' })
+        return
+      }
+
       try {
         const indexHtml = await readFile(join(staticDir, 'index.html'))
         send(response, 200, indexHtml, {
@@ -199,7 +233,16 @@ const server = createServer(async (request, response) => {
   await serveStaticFile(requestUrl.pathname, response)
 })
 
-server.listen(port, () => {
-  console.log(`pet storage server listening on http://127.0.0.1:${port}`)
+server.on('error', (error) => {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'EADDRINUSE') {
+    console.error(`port ${port} is already in use on ${host}`)
+    process.exit(1)
+  }
+
+  throw error
+})
+
+server.listen(port, host, () => {
+  console.log(`pet storage server listening on http://${formatHostForUrl(host)}:${port}`)
   console.log(`persisting app state to ${dataFile}`)
 })

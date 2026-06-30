@@ -17,12 +17,28 @@ type MotionStep = {
   source: string
 }
 
-const frameSorter = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })
+type ClipStepOptions = {
+  leadHold?: number
+  trailHold?: number
+}
 
-const sortFrameSources = (frames: Record<string, string>) =>
+type FrameLoader = () => Promise<string>
+
+type FeedMotionConfig = {
+  duration: number
+  loaders: FrameLoader[]
+  options?: ClipStepOptions
+}
+
+const frameSorter = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })
+const emptyMotionSteps: MotionStep[] = []
+
+const sortFrameLoaders = (frames: Record<string, FrameLoader>) =>
   Object.entries(frames)
     .sort(([frameA], [frameB]) => frameSorter.compare(frameA, frameB))
-    .map(([, source]) => source)
+    .map(([, loader]) => loader)
+
+const loadFrameSources = (loaders: FrameLoader[]) => Promise.all(loaders.map((loader) => loader()))
 
 const createHoldSteps = (source: string | undefined, count: number, duration: number) =>
   source ? Array.from({ length: count }, () => ({ duration, source })) : []
@@ -30,10 +46,7 @@ const createHoldSteps = (source: string | undefined, count: number, duration: nu
 const createClipSteps = (
   sources: string[],
   duration: number,
-  options?: {
-    leadHold?: number
-    trailHold?: number
-  },
+  options?: ClipStepOptions,
 ): MotionStep[] => {
   if (!sources.length) {
     return []
@@ -49,106 +62,102 @@ const createClipSteps = (
   ]
 }
 
-const blinkTailFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/01眨眼睛甩尾巴/*.png', {
-    eager: true,
+const blinkTailFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/01眨眼睛甩尾巴/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const sleepFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/02 趴着睡觉/*.png', {
-    eager: true,
+const sleepFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/02 趴着睡觉/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const lickPawFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/03 舔爪子/*.png', {
-    eager: true,
+const lickPawFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/03 舔爪子/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const catFoodFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/05 吃猫粮/*.png', {
-    eager: true,
+const catFoodFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/05 吃猫粮/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const candyFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/06 吃棒棒糖/*.png', {
-    eager: true,
+const candyFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/06 吃棒棒糖/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const milkFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/07 喝牛奶/*.png', {
-    eager: true,
+const milkFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/07 喝牛奶/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const fishSnackFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/08 吃小鱼干/*.png', {
-    eager: true,
+const fishSnackFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/08 吃小鱼干/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const bodyWashFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/11 洗一洗/*.png', {
-    eager: true,
+const bodyWashFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/11 洗一洗/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const yarnBallFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/09玩毛线球/*.png', {
-    eager: true,
+const yarnBallFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/09玩毛线球/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const featherWandFrameSources = sortFrameSources(
-  import.meta.glob('../../图片/10魔法棒/*.png', {
-    eager: true,
+const featherWandFrameLoaders = sortFrameLoaders(
+  import.meta.glob('../../图片/10魔法棒/*.webp', {
     import: 'default',
-  }) as Record<string, string>,
+  }) as Record<string, FrameLoader>,
 )
 
-const blinkTailMotionSteps = createClipSteps(blinkTailFrameSources, 110, { leadHold: 10 })
-const lickPawMotionSteps = createClipSteps(lickPawFrameSources, 185, {
-  leadHold: 1,
-  trailHold: 3,
-})
-const sleepMotionSteps = createClipSteps(sleepFrameSources, 176)
-const defaultMotionSteps = [
-  ...blinkTailMotionSteps,
-  ...blinkTailMotionSteps,
-  ...lickPawMotionSteps,
-]
-
-const feedMotionStepsById: Record<FeedAnimationId, MotionStep[]> = {
-  'cat-food': createClipSteps(catFoodFrameSources, 125, { leadHold: 1, trailHold: 2 }),
-  'canned-food': createClipSteps(candyFrameSources, 135, { leadHold: 1, trailHold: 2 }),
-  milk: createClipSteps(milkFrameSources, 130, { leadHold: 1, trailHold: 2 }),
-  'fish-snack': createClipSteps(fishSnackFrameSources, 125, { leadHold: 1, trailHold: 2 }),
-  'body-wash': createClipSteps(bodyWashFrameSources, 140, { leadHold: 1, trailHold: 2 }),
-  'yarn-ball': createClipSteps(yarnBallFrameSources, 130, { leadHold: 1, trailHold: 2 }),
-  'feather-wand': createClipSteps(featherWandFrameSources, 130, { leadHold: 1, trailHold: 2 }),
-}
-
-const feedFallbackFrameById: Record<FeedAnimationId, string | undefined> = {
-  'cat-food': catFoodFrameSources.at(-1) ?? catFoodFrameSources[0],
-  'canned-food': candyFrameSources.at(-1) ?? candyFrameSources[0],
-  milk: milkFrameSources.at(-1) ?? milkFrameSources[0],
-  'fish-snack': fishSnackFrameSources.at(-1) ?? fishSnackFrameSources[0],
-  'body-wash': bodyWashFrameSources.at(-1) ?? bodyWashFrameSources[0],
-  'yarn-ball': yarnBallFrameSources.at(-1) ?? yarnBallFrameSources[0],
-  'feather-wand': featherWandFrameSources.at(-1) ?? featherWandFrameSources[0],
+const feedMotionConfigById: Record<FeedAnimationId, FeedMotionConfig> = {
+  'cat-food': {
+    duration: 125,
+    loaders: catFoodFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
+  'canned-food': {
+    duration: 135,
+    loaders: candyFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
+  milk: {
+    duration: 130,
+    loaders: milkFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
+  'fish-snack': {
+    duration: 125,
+    loaders: fishSnackFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
+  'body-wash': {
+    duration: 140,
+    loaders: bodyWashFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
+  'yarn-ball': {
+    duration: 130,
+    loaders: yarnBallFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
+  'feather-wand': {
+    duration: 130,
+    loaders: featherWandFrameLoaders,
+    options: { leadHold: 1, trailHold: 2 },
+  },
 }
 
 const getMotionStepAtElapsed = (steps: MotionStep[], elapsed: number) => {
@@ -181,6 +190,14 @@ const AnimatedPetArt = ({
   sleepEndAt,
 }: Pick<PetCardProps, 'feedAnimationQueue' | 'onFeedAnimationComplete' | 'sleepEndAt'>) => {
   const isSleeping = Boolean(sleepEndAt && sleepEndAt > Date.now())
+  const [defaultMotionSteps, setDefaultMotionSteps] = useState<MotionStep[]>(emptyMotionSteps)
+  const [sleepMotionSteps, setSleepMotionSteps] = useState<MotionStep[]>(emptyMotionSteps)
+  const [feedMotionStepsById, setFeedMotionStepsById] = useState<
+    Partial<Record<FeedAnimationId, MotionStep[]>>
+  >({})
+  const [feedFallbackFrameById, setFeedFallbackFrameById] = useState<
+    Partial<Record<FeedAnimationId, string>>
+  >({})
   const [defaultPlaybackIndex, setDefaultPlaybackIndex] = useState(0)
   const [sleepPlaybackIndex, setSleepPlaybackIndex] = useState(0)
   const [feedPlaybackIndex, setFeedPlaybackIndex] = useState(0)
@@ -188,7 +205,12 @@ const AnimatedPetArt = ({
   const [preparedFeedToken, setPreparedFeedToken] = useState('')
 
   const activeFeedAnimationId = !isSleeping ? feedAnimationQueue[0] : undefined
-  const activeFeedSteps = activeFeedAnimationId ? feedMotionStepsById[activeFeedAnimationId] : []
+  const activeFeedSteps = activeFeedAnimationId
+    ? (feedMotionStepsById[activeFeedAnimationId] ?? emptyMotionSteps)
+    : emptyMotionSteps
+  const hasLoadedActiveFeedSteps = Boolean(
+    activeFeedAnimationId && feedMotionStepsById[activeFeedAnimationId],
+  )
   const activeFeedToken = activeFeedAnimationId ? feedAnimationQueue.join('|') : ''
 
   const advanceDefaultFrame = useEffectEvent(() => {
@@ -205,6 +227,99 @@ const AnimatedPetArt = ({
   })
 
   useEffect(() => {
+    let isCancelled = false
+
+    const loadDefaultFrames = async () => {
+      const [blinkTailFrameSources, lickPawFrameSources] = await Promise.all([
+        loadFrameSources(blinkTailFrameLoaders),
+        loadFrameSources(lickPawFrameLoaders),
+      ])
+
+      if (isCancelled) {
+        return
+      }
+
+      const blinkTailMotionSteps = createClipSteps(blinkTailFrameSources, 110, {
+        leadHold: 10,
+      })
+      const lickPawMotionSteps = createClipSteps(lickPawFrameSources, 185, {
+        leadHold: 1,
+        trailHold: 3,
+      })
+
+      setDefaultMotionSteps([
+        ...blinkTailMotionSteps,
+        ...blinkTailMotionSteps,
+        ...lickPawMotionSteps,
+      ])
+    }
+
+    void loadDefaultFrames()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isSleeping || sleepMotionSteps.length) {
+      return
+    }
+
+    let isCancelled = false
+
+    const loadSleepFrames = async () => {
+      const sleepFrameSources = await loadFrameSources(sleepFrameLoaders)
+
+      if (!isCancelled) {
+        setSleepMotionSteps(createClipSteps(sleepFrameSources, 176))
+      }
+    }
+
+    void loadSleepFrames()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [isSleeping, sleepMotionSteps.length])
+
+  useEffect(() => {
+    if (!activeFeedAnimationId || hasLoadedActiveFeedSteps) {
+      return
+    }
+
+    let isCancelled = false
+    const motionConfig = feedMotionConfigById[activeFeedAnimationId]
+
+    const loadFeedFrames = async () => {
+      const frameSources = await loadFrameSources(motionConfig.loaders)
+
+      if (isCancelled) {
+        return
+      }
+
+      setFeedMotionStepsById((current) => ({
+        ...current,
+        [activeFeedAnimationId]: createClipSteps(
+          frameSources,
+          motionConfig.duration,
+          motionConfig.options,
+        ),
+      }))
+      setFeedFallbackFrameById((current) => ({
+        ...current,
+        [activeFeedAnimationId]: frameSources.at(-1) ?? frameSources[0],
+      }))
+    }
+
+    void loadFeedFrames()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [activeFeedAnimationId, hasLoadedActiveFeedSteps])
+
+  useEffect(() => {
     if (isSleeping && sleepEndAt) {
       const activeSleepStep = getMotionStepAtElapsed(
         sleepMotionSteps,
@@ -217,7 +332,7 @@ const AnimatedPetArt = ({
 
     setSleepPlaybackIndex(0)
     setDefaultPlaybackIndex(0)
-  }, [isSleeping, sleepEndAt])
+  }, [isSleeping, sleepEndAt, sleepMotionSteps])
 
   useEffect(() => {
     setFeedPlaybackIndex(0)
@@ -247,7 +362,7 @@ const AnimatedPetArt = ({
     }, currentDefaultStep.duration)
 
     return () => window.clearTimeout(timeoutId)
-  }, [activeFeedAnimationId, advanceDefaultFrame, defaultPlaybackIndex, isSleeping])
+  }, [activeFeedAnimationId, defaultMotionSteps, defaultPlaybackIndex, isSleeping])
 
   useEffect(() => {
     if (!isSleeping || !sleepEndAt || sleepMotionSteps.length < 2) {
@@ -279,12 +394,13 @@ const AnimatedPetArt = ({
     }, activeSleepStep.remaining)
 
     return () => window.clearTimeout(timeoutId)
-  }, [isSleeping, sleepEndAt, sleepPlaybackIndex])
+  }, [isSleeping, sleepEndAt, sleepMotionSteps, sleepPlaybackIndex])
 
   useEffect(() => {
     if (
       isSleeping ||
       !activeFeedAnimationId ||
+      !hasLoadedActiveFeedSteps ||
       preparedFeedToken !== activeFeedToken ||
       completedFeedToken === activeFeedToken
     ) {
@@ -320,15 +436,15 @@ const AnimatedPetArt = ({
     activeFeedToken,
     completedFeedToken,
     feedPlaybackIndex,
-    finishFeedAnimation,
+    hasLoadedActiveFeedSteps,
     isSleeping,
     preparedFeedToken,
   ])
 
   const currentFrame = isSleeping
     ? sleepMotionSteps[sleepPlaybackIndex]?.source ??
-      sleepFrameSources.at(-1) ??
-      sleepFrameSources[0]
+      defaultMotionSteps[defaultPlaybackIndex]?.source ??
+      defaultMotionSteps[0]?.source
     : activeFeedAnimationId
       ? activeFeedSteps[feedPlaybackIndex]?.source ??
         feedFallbackFrameById[activeFeedAnimationId] ??
@@ -339,7 +455,7 @@ const AnimatedPetArt = ({
   }`
 
   if (!currentFrame) {
-    return <span className="pet-avatar__empty">动作帧还没接入</span>
+    return <span className="pet-avatar__empty">动作帧加载中</span>
   }
 
   return (

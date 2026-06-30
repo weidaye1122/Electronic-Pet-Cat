@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react'
 import type { ChangeEvent } from 'react'
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { AuthGate } from './components/AuthGate'
 import { BottomNav } from './components/BottomNav'
 import { LevelUpCelebration } from './components/LevelUpCelebration'
-import { PetProvider, usePetStore } from './hooks/usePetStore'
-import { ToastProvider } from './hooks/useToast'
+import { PetProvider } from './hooks/PetProvider'
+import { ToastProvider } from './hooks/ToastProvider'
+import { usePetStore } from './hooks/usePetStore'
 import { Growth } from './pages/Growth'
 import { Home } from './pages/Home'
 import { Inventory } from './pages/Inventory'
@@ -12,29 +14,26 @@ import { Shop } from './pages/Shop'
 import { Tasks } from './pages/Tasks'
 
 function AppLayout() {
-  const { pet, meta, taskStats, levelUpCelebration, resetAllData, setProfileAvatar } =
-    usePetStore()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const hasHandledResetRef = useRef(false)
+  const {
+    isSessionUnlocked,
+    isStoreReady,
+    pet,
+    meta,
+    taskStats,
+    levelUpCelebration,
+    setProfileAvatar,
+  } = usePetStore()
   const avatarInputRef = useRef<HTMLInputElement | null>(null)
+  const titleName = pet.name.trim() || '小猫'
+  const companionName = meta.userName.trim() || '你'
 
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search)
+    document.title = `${titleName}成长记`
+  }, [titleName])
 
-    if (searchParams.get('reset') !== '1') {
-      hasHandledResetRef.current = false
-      return
-    }
-
-    if (hasHandledResetRef.current) {
-      return
-    }
-
-    hasHandledResetRef.current = true
-    resetAllData()
-    navigate('/', { replace: true })
-  }, [location.search, navigate, resetAllData])
+  if (!isStoreReady || !isSessionUnlocked) {
+    return <AuthGate />
+  }
 
   const handleAvatarPick = () => {
     avatarInputRef.current?.click()
@@ -95,9 +94,9 @@ function AppLayout() {
           <div className="app-header__intro">
             <p className="eyebrow">儿童互动电子宠物</p>
             <div className="app-header__title-row">
-              <h1>小猫成长记</h1>
+              <h1>{titleName}成长记</h1>
               <p className="header-copy">
-                陪着 {pet.name} 一起做任务、拿积分、慢慢长大。
+                陪着 {companionName} 一起做任务、拿积分、慢慢长大。
               </p>
             </div>
           </div>

@@ -153,6 +153,209 @@ a {
   display: none;
 }
 
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-panel {
+  width: min(100%, 430px);
+  padding: 28px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  box-shadow: 0 20px 48px rgba(196, 129, 64, 0.2);
+  backdrop-filter: blur(12px);
+}
+
+.auth-hero {
+  position: relative;
+  width: 112px;
+  height: 96px;
+  margin: 0 auto 18px;
+}
+
+.auth-hero__ear {
+  position: absolute;
+  top: 3px;
+  width: 38px;
+  height: 48px;
+  border-radius: 13px 13px 8px 8px;
+  background: #ffbb7f;
+  border: 5px solid #5b4030;
+}
+
+.auth-hero__ear--left {
+  left: 10px;
+  transform: rotate(-28deg);
+}
+
+.auth-hero__ear--right {
+  right: 10px;
+  transform: rotate(28deg);
+}
+
+.auth-hero__ear::after {
+  content: '';
+  position: absolute;
+  inset: 10px 8px 9px;
+  border-radius: 10px;
+  background: #ff8fb0;
+}
+
+.auth-hero__face {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 96px;
+  height: 78px;
+  transform: translateX(-50%);
+  border: 5px solid #5b4030;
+  border-radius: 44% 44% 46% 46%;
+  background:
+    radial-gradient(circle at 32% 72%, #ffd3df 0 9%, transparent 10%),
+    radial-gradient(circle at 68% 72%, #ffd3df 0 9%, transparent 10%),
+    linear-gradient(180deg, #fff4df, #ffd18e);
+}
+
+.auth-hero__eye {
+  position: absolute;
+  top: 32px;
+  width: 10px;
+  height: 15px;
+  border-radius: 999px;
+  background: #4b3327;
+}
+
+.auth-hero__eye--left {
+  left: 28px;
+}
+
+.auth-hero__eye--right {
+  right: 28px;
+}
+
+.auth-hero__nose {
+  position: absolute;
+  left: 50%;
+  top: 51px;
+  width: 12px;
+  height: 9px;
+  transform: translateX(-50%);
+  border-radius: 50% 50% 55% 55%;
+  background: #e46c84;
+}
+
+.auth-copy {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+.auth-copy h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.auth-copy p:last-child {
+  margin: 8px auto 0;
+  max-width: 310px;
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+
+.auth-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.password-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.password-display {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.password-display span {
+  color: var(--color-muted);
+  font-size: 0.92rem;
+}
+
+.password-display input {
+  position: absolute;
+  inset: 26px 0 0;
+  opacity: 0;
+}
+
+.password-display strong {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--color-line);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--color-text);
+  font-size: 1.15rem;
+  letter-spacing: 0.14em;
+  overflow: hidden;
+}
+
+.number-pad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.number-key {
+  min-height: 54px;
+  border: 0;
+  border-radius: 17px;
+  background: linear-gradient(180deg, #fff9ef, #ffe2ad);
+  color: var(--color-text);
+  font-size: 1.25rem;
+  font-weight: 800;
+  box-shadow: 0 10px 18px rgba(205, 146, 81, 0.12);
+}
+
+.number-key--utility {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--color-line);
+  font-size: 0.95rem;
+}
+
+.auth-error {
+  margin: 12px 0 0;
+  color: #c95144;
+  text-align: center;
+  font-weight: 700;
+}
+
+.auth-submit {
+  margin-top: 14px;
+}
+
+.auth-loading {
+  width: 48px;
+  height: 48px;
+  margin: 18px auto 0;
+  border: 5px solid rgba(255, 184, 77, 0.26);
+  border-top-color: var(--color-primary-deep);
+  border-radius: 999px;
+  animation: authSpin 720ms linear infinite;
+}
+
 .panel,
 .pet-card,
 .task-card,
@@ -1470,6 +1673,12 @@ a {
   }
 }
 
+@keyframes authSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes celebrationGlow {
   0%,
   100% {
@@ -1600,6 +1809,15 @@ a {
   .status-grid,
   .card-grid,
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-panel {
+    padding: 22px;
+  }
+
+  .auth-fields,
+  .password-fields {
     grid-template-columns: 1fr;
   }
 

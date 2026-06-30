@@ -99,13 +99,3 @@ export const saveRemoteAppState = async (state: PersistedAppState) => {
     throw new Error(`保存后端存档失败: ${response.status}`)
   }
 }
-
-export const clearRemoteAppState = async () => {
-  const response = await fetch(persistenceApiPath, {
-    method: 'DELETE',
-  })
-
-  if (!response.ok && response.status !== 404) {
-    throw new Error(`清空后端存档失败: ${response.status}`)
-  }
-}
