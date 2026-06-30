@@ -1,0 +1,75 @@
+name: Publish Docker Images
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: electronic-pet-cat
+  DOCKERHUB_NAMESPACE: weidaye1122
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Derive release tags
+        id: vars
+        run: |
+          VERSION="$(node -e "console.log(JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version)")"
+          IMAGE_VERSION="$(node -e "const [major, minor] = JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version.split('.'); console.log([major, minor].join('.'))")"
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "image_version=${IMAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "ghcr_image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "dockerhub_image=docker.io/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify Docker Hub token
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "${DOCKERHUB_TOKEN}" ]; then
+            echo "Missing DOCKERHUB_TOKEN repository secret."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_NAMESPACE }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and publish release images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.ghcr_image }}:${{ steps.vars.outputs.image_version }}
+            ${{ steps.vars.outputs.ghcr_image }}:latest
+            ${{ steps.vars.outputs.dockerhub_image }}:${{ steps.vars.outputs.image_version }}
+            ${{ steps.vars.outputs.dockerhub_image }}:latest
+          labels: |
+            org.opencontainers.image.title=Electronic Pet Cat
+            org.opencontainers.image.description=React + Vite electronic pet cat app with a lightweight state persistence server.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}

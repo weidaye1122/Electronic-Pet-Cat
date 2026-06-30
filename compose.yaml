@@ -1,0 +1,13 @@
+services:
+  cat-pet-growth:
+    build: .
+    container_name: cat-pet-growth
+    ports:
+      - '4173:4173'
+    environment:
+      PORT: 4173
+      PET_DATA_FILE: /data/pet-state.json
+      STATIC_DIR: /app/dist
+    volumes:
+      - ./docker-data:/data
+    restart: unless-stopped
