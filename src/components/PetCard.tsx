@@ -505,9 +505,21 @@ export const PetCard = ({
   sleepEndAt,
   shoesIcon,
 }: PetCardProps) => {
+  const petName = pet.name.trim() || '小猫'
+
+  const handlePetTap = () => {
+    playInteractionFeedback('cat')
+  }
+
   return (
     <section className={`pet-card pet-card--${pet.currentBackground || 'default'}`}>
-      <div className="pet-avatar" aria-label={`${pet.name} 的小猫形象`} role="img">
+      <button
+        aria-label={`摸摸${petName}`}
+        className="pet-avatar pet-avatar--interactive"
+        data-feedback-kind="none"
+        onClick={handlePetTap}
+        type="button"
+      >
         {hatIcon ? (
           <span className="pet-avatar__hat" aria-hidden="true">
             {hatIcon}
@@ -532,7 +544,7 @@ export const PetCard = ({
           />
         </div>
         <span className="pet-avatar__shadow" />
-      </div>
+      </button>
     </section>
   )
 }

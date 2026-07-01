@@ -14,7 +14,14 @@ type AudioWindow = Window &
   }
 
 type VibrationNavigator = Navigator & {
-  vibrate?: (pattern: number[]) => boolean
+  vibrate?: (pattern: number | number[]) => boolean
+}
+
+type CatMeowSegment = {
+  duration: number
+  offset: number
+  playbackRate: number
+  volume: number
 }
 
 const feedbackKinds = new Set<InteractionFeedbackKind>([
@@ -29,17 +36,25 @@ const feedbackKinds = new Set<InteractionFeedbackKind>([
 ])
 
 const vibrationPatterns: Record<InteractionFeedbackKind, number | number[]> = {
-  button: 8,
-  careAction: [10, 24, 10],
-  cat: [12, 32, 18],
-  error: [30, 35, 30],
-  inventoryUse: [14, 28, 14],
-  longPress: [24, 34, 34],
-  password: 12,
-  success: [10, 22, 14],
+  button: 18,
+  careAction: [28, 38, 28],
+  cat: [28, 34, 28],
+  error: [44, 42, 44],
+  inventoryUse: [26, 32, 26],
+  longPress: [58, 52, 80],
+  password: 20,
+  success: [24, 32, 32],
 }
 
+const catMeowSoundPath = '/sounds/cat-meow.m4a'
+const catMeowSegments: CatMeowSegment[] = [
+  { duration: 0.96, offset: 0.28, playbackRate: 1.02, volume: 0.72 },
+  { duration: 0.92, offset: 3.72, playbackRate: 1, volume: 0.64 },
+]
+
 let audioContext: AudioContext | null = null
+let catMeowBuffer: AudioBuffer | null = null
+let catMeowBufferPromise: Promise<AudioBuffer | null> | null = null
 
 export const isInteractionFeedbackKind = (value: string | undefined): value is InteractionFeedbackKind =>
   Boolean(value && feedbackKinds.has(value as InteractionFeedbackKind))
@@ -68,8 +83,10 @@ const vibrate = (kind: InteractionFeedbackKind) => {
 
   if (typeof vibration === 'function') {
     const pattern = vibrationPatterns[kind]
+    const vibrateWithPattern: (nextPattern: number | number[]) => boolean =
+      vibration.bind(navigator)
 
-    vibration.call(navigator, Array.isArray(pattern) ? pattern : [pattern])
+    vibrateWithPattern(pattern)
   }
 }
 
@@ -103,6 +120,91 @@ const playTone = (
   oscillator.stop(endAt + 0.025)
 }
 
+const loadCatMeowBuffer = (context: AudioContext) => {
+  if (catMeowBuffer) {
+    return Promise.resolve(catMeowBuffer)
+  }
+
+  catMeowBufferPromise ??= fetch(catMeowSoundPath)
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Unable to load ${catMeowSoundPath}`)
+      }
+
+      return response.arrayBuffer()
+    })
+    .then((audioData) => context.decodeAudioData(audioData))
+    .then((buffer) => {
+      catMeowBuffer = buffer
+      return buffer
+    })
+    .catch(() => {
+      catMeowBufferPromise = null
+      return null
+    })
+
+  return catMeowBufferPromise
+}
+
+const playCatMeowSegment = (
+  context: AudioContext,
+  buffer: AudioBuffer,
+  segment: CatMeowSegment,
+  startAt: number,
+) => {
+  const source = context.createBufferSource()
+  const gain = context.createGain()
+  const endAt = startAt + segment.duration
+
+  source.buffer = buffer
+  source.playbackRate.setValueAtTime(segment.playbackRate, startAt)
+
+  gain.gain.setValueAtTime(0.0001, startAt)
+  gain.gain.exponentialRampToValueAtTime(segment.volume, startAt + 0.035)
+  gain.gain.setValueAtTime(segment.volume, Math.max(startAt + 0.04, endAt - 0.08))
+  gain.gain.exponentialRampToValueAtTime(0.0001, endAt)
+
+  source.connect(gain)
+  gain.connect(context.destination)
+  source.start(startAt, segment.offset, segment.duration)
+  source.stop(endAt + 0.05)
+}
+
+const playSyntheticCatMeow = (context: AudioContext, startAt: number) => {
+  playTone(context, startAt, 760, 0.22, 0.045, 'sine', 420)
+  playTone(context, startAt + 0.08, 520, 0.24, 0.038, 'sine', 820)
+  playTone(context, startAt + 0.03, 1120, 0.16, 0.012, 'triangle', 660)
+}
+
+const playSyntheticCatMeowPair = (context: AudioContext) => {
+  const now = context.currentTime + 0.012
+
+  playSyntheticCatMeow(context, now)
+  playSyntheticCatMeow(context, now + 0.62)
+}
+
+const playCatMeowPair = (context: AudioContext) => {
+  const playRealMeowPair = (buffer: AudioBuffer | null) => {
+    if (!buffer) {
+      playSyntheticCatMeowPair(context)
+      return
+    }
+
+    const now = context.currentTime + 0.012
+
+    catMeowSegments.forEach((segment, index) => {
+      playCatMeowSegment(context, buffer, segment, now + index * 1.12)
+    })
+  }
+
+  if (catMeowBuffer) {
+    playRealMeowPair(catMeowBuffer)
+    return
+  }
+
+  void loadCatMeowBuffer(context).then(playRealMeowPair)
+}
+
 const playFeedbackSound = (kind: InteractionFeedbackKind, context: AudioContext) => {
   const now = context.currentTime + 0.012
 
@@ -130,9 +232,7 @@ const playFeedbackSound = (kind: InteractionFeedbackKind, context: AudioContext)
   }
 
   if (kind === 'cat') {
-    playTone(context, now, 720, 0.18, 0.05, 'sine', 460)
-    playTone(context, now + 0.105, 520, 0.18, 0.044, 'sine', 760)
-    playTone(context, now + 0.025, 930, 0.12, 0.012, 'triangle', 690)
+    playCatMeowPair(context)
     return
   }
 
@@ -162,6 +262,10 @@ export const playInteractionFeedback = (kind: InteractionFeedbackKind = 'button'
 
   const play = () => {
     try {
+      if (kind !== 'cat') {
+        void loadCatMeowBuffer(context)
+      }
+
       playFeedbackSound(kind, context)
     } catch {
       audioContext = null
