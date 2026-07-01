@@ -180,13 +180,7 @@ export const AuthGate = () => {
     <main className="auth-screen">
       <section className="auth-panel">
         <div className="auth-hero" aria-hidden="true">
-          <span className="auth-hero__ear auth-hero__ear--left" />
-          <span className="auth-hero__ear auth-hero__ear--right" />
-          <span className="auth-hero__face">
-            <span className="auth-hero__eye auth-hero__eye--left" />
-            <span className="auth-hero__eye auth-hero__eye--right" />
-            <span className="auth-hero__nose" />
-          </span>
+          <img alt="" className="auth-hero__image" src="/favicon.svg" />
         </div>
 
         <div className="auth-copy">

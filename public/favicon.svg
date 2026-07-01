@@ -1,15 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <rect width="96" height="96" rx="24" fill="#fff1d7"/>
-  <path d="M24 40 31 16l15 16h4l15-16 7 24" fill="#ffbd73" stroke="#5a3b2e" stroke-width="5" stroke-linejoin="round"/>
-  <path d="M17 47c0-21 14-34 31-34s31 13 31 34c0 22-14 36-31 36S17 69 17 47Z" fill="#ffd08d" stroke="#5a3b2e" stroke-width="5"/>
-  <path d="M31 20 40 33H27Z" fill="#ff8eb0"/>
-  <path d="M65 20 56 33h13Z" fill="#ff8eb0"/>
-  <path d="M24 46c-8-2-14-6-18-12M23 57c-8 0-15 2-21 6M72 46c8-2 14-6 18-12M73 57c8 0 15 2 21 6" stroke="#5a3b2e" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="35" cy="47" r="5" fill="#4a3026"/>
-  <circle cx="61" cy="47" r="5" fill="#4a3026"/>
-  <path d="M48 55c-4 0-6-3-4-6h8c2 3 0 6-4 6Z" fill="#e86683"/>
-  <path d="M48 56v4M48 60c-4 5-10 5-13 0M48 60c4 5 10 5 13 0" fill="none" stroke="#5a3b2e" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="27" cy="58" r="6" fill="#ffb5c8" opacity=".82"/>
-  <circle cx="69" cy="58" r="6" fill="#ffb5c8" opacity=".82"/>
-  <path d="M35 34c5-5 21-5 26 0" stroke="#f39a4a" stroke-width="4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112">
+  <defs>
+    <linearGradient id="face-fill" x1="56" x2="56" y1="25" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff4df"/>
+      <stop offset="1" stop-color="#ffd18e"/>
+    </linearGradient>
+  </defs>
+  <g transform="rotate(-28 29 35)">
+    <rect x="10" y="11" width="38" height="48" rx="13" fill="#ffbb7f" stroke="#5b4030" stroke-width="5"/>
+    <rect x="18" y="22" width="22" height="28" rx="10" fill="#ff8fb0"/>
+  </g>
+  <g transform="rotate(28 83 35)">
+    <rect x="64" y="11" width="38" height="48" rx="13" fill="#ffbb7f" stroke="#5b4030" stroke-width="5"/>
+    <rect x="72" y="22" width="22" height="28" rx="10" fill="#ff8fb0"/>
+  </g>
+  <path d="M56 25c28 0 48 18 48 45 0 24-19 34-48 34S8 94 8 70c0-27 20-45 48-45Z" fill="url(#face-fill)" stroke="#5b4030" stroke-width="5"/>
+  <ellipse cx="36" cy="78" rx="11" ry="10" fill="#ffd3df"/>
+  <ellipse cx="76" cy="78" rx="11" ry="10" fill="#ffd3df"/>
+  <rect x="36" y="58" width="12" height="20" rx="6" fill="#4b3327"/>
+  <rect x="64" y="58" width="12" height="20" rx="6" fill="#4b3327"/>
+  <rect x="50" y="83" width="12" height="9" rx="5" fill="#e46c84"/>
 </svg>
