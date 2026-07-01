@@ -10,6 +10,7 @@ export const createDefaultMeta = (): AppMeta => {
     streakCount: 0,
     userName: '',
     profileAvatar: '',
+    profileAvatarUpdatedAt: 0,
     passwordHash: '',
     passwordSalt: '',
     setupCompletedAt: '',

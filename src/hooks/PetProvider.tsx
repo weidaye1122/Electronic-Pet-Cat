@@ -65,6 +65,7 @@ const PLAY_MOOD_STAGE_ONE_MS = 12 * 60 * 60 * 1000
 const PLAY_MOOD_STAGE_TWO_MS = 24 * 60 * 60 * 1000
 const PLAY_MOOD_STAGE_ONE_VALUE = 6
 const PLAY_MOOD_STAGE_TWO_VALUE = 8
+const REMOTE_AVATAR_SYNC_MS = 15_000
 const removedShopItemIds = new Set([
   'pumpkin',
   'chicken',
@@ -125,6 +126,8 @@ const canUseConsumableItem = (pet: Pet, item: ShopItem) => pet.energy >= getCons
 const shouldRestoreSessionUnlock = (meta: AppMeta) =>
   Boolean(meta.passwordHash && loadSessionUnlock() === meta.passwordHash)
 const isCustomTask = (taskId: string) => taskId.startsWith('custom-')
+const getProfileAvatarUpdatedAt = (meta: AppMeta) =>
+  typeof meta.profileAvatarUpdatedAt === 'number' ? meta.profileAvatarUpdatedAt : meta.profileAvatar ? 1 : 0
 const normalizeRewardValue = (value: number, fallback: number) => {
   if (!Number.isFinite(value)) {
     return fallback
@@ -350,6 +353,7 @@ const normalizeMeta = (meta: AppMeta): AppMeta => {
     ...meta,
     userName: typeof meta.userName === 'string' ? meta.userName : defaults.userName,
     profileAvatar: meta.profileAvatar ?? '',
+    profileAvatarUpdatedAt: getProfileAvatarUpdatedAt(meta),
     passwordHash: typeof meta.passwordHash === 'string' ? meta.passwordHash : '',
     passwordSalt: typeof meta.passwordSalt === 'string' ? meta.passwordSalt : '',
     setupCompletedAt: typeof meta.setupCompletedAt === 'string' ? meta.setupCompletedAt : '',
@@ -413,6 +417,49 @@ const normalizePersistedState = (state: PersistedAppState): PetStoreData => {
     pointRecords: state.pointRecords,
     meta: normalizeMeta(state.meta),
   }
+}
+
+const mergeRemoteProfileAvatar = (
+  current: PetStoreData,
+  remoteState: PersistedAppState,
+): PetStoreData => {
+  const remoteMeta = normalizeMeta(remoteState.meta)
+  const currentAvatar = current.meta.profileAvatar ?? ''
+  const remoteAvatar = remoteMeta.profileAvatar ?? ''
+  const currentUpdatedAt = getProfileAvatarUpdatedAt(current.meta)
+  const remoteUpdatedAt = getProfileAvatarUpdatedAt(remoteMeta)
+  const shouldUseRemoteAvatar =
+    remoteUpdatedAt > currentUpdatedAt ||
+    (remoteUpdatedAt === currentUpdatedAt && Boolean(remoteAvatar) && remoteAvatar !== currentAvatar)
+
+  if (!shouldUseRemoteAvatar) {
+    return current
+  }
+
+  return {
+    ...current,
+    meta: normalizeMeta({
+      ...current.meta,
+      profileAvatar: remoteAvatar,
+      profileAvatarUpdatedAt: remoteUpdatedAt,
+    }),
+  }
+}
+
+const saveRemoteStoreWithAvatarMerge = async (store: PetStoreData) => {
+  let storeToSave = store
+
+  try {
+    const remoteState = await loadRemoteAppState()
+
+    if (remoteState) {
+      storeToSave = mergeRemoteProfileAvatar(storeToSave, remoteState)
+    }
+  } catch {
+    // Saving the current snapshot is still better than dropping the update.
+  }
+
+  await saveRemoteAppState(toPersistedAppState(storeToSave))
 }
 
 const getInitialStoreUrlOptions = () => {
@@ -1003,7 +1050,7 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
 
     remoteSaveTimerRef.current = window.setTimeout(() => {
       remoteSaveTimerRef.current = null
-      void saveRemoteAppState(toPersistedAppState(storeRef.current)).catch(() => {
+      void saveRemoteStoreWithAvatarMerge(storeRef.current).catch(() => {
         // Keep the local cache as the last-resort fallback if the backend save fails.
       })
     }, 220)
@@ -1015,6 +1062,59 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
       }
     }
   }, [hasHydratedRemoteStore, store])
+
+  useEffect(() => {
+    if (!hasHydratedRemoteStore || !isSessionUnlocked) {
+      return
+    }
+
+    let isCancelled = false
+    let isSyncing = false
+
+    const syncRemoteProfileAvatar = async () => {
+      if (isSyncing) {
+        return
+      }
+
+      isSyncing = true
+
+      try {
+        const remoteState = await loadRemoteAppState()
+
+        if (isCancelled || !remoteState) {
+          return
+        }
+
+        const nextStore = mergeRemoteProfileAvatar(storeRef.current, remoteState)
+
+        if (nextStore !== storeRef.current) {
+          commitStore(() => nextStore)
+        }
+      } catch {
+        // The regular local cache keeps the UI usable while remote sync is unavailable.
+      } finally {
+        isSyncing = false
+      }
+    }
+
+    void syncRemoteProfileAvatar()
+    const intervalId = window.setInterval(syncRemoteProfileAvatar, REMOTE_AVATAR_SYNC_MS)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void syncRemoteProfileAvatar()
+      }
+    }
+
+    window.addEventListener('focus', syncRemoteProfileAvatar)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      isCancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', syncRemoteProfileAvatar)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [hasHydratedRemoteStore, isSessionUnlocked])
 
   useEffect(() => {
     if (!hasHydratedRemoteStore || !isSessionUnlocked) {
@@ -1566,6 +1666,7 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
       meta: normalizeMeta({
         ...current.meta,
         profileAvatar: avatarDataUrl,
+        profileAvatarUpdatedAt: Date.now(),
       }),
     }))
 

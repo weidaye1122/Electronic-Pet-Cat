@@ -53,6 +53,7 @@ export type AppMeta = {
   streakCount: number
   userName: string
   profileAvatar?: string
+  profileAvatarUpdatedAt?: number
   passwordHash?: string
   passwordSalt?: string
   setupCompletedAt?: string
