@@ -957,6 +957,7 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
   const storeRef = useRef(store)
   const shouldOverwriteRemoteOnHydrateRef = useRef(shouldOverwriteRemoteOnNextHydration)
   const remoteSaveTimerRef = useRef<number | null>(null)
+  const shouldSkipNextRemoteSaveRef = useRef(false)
   const levelUpCelebrationTimerRef = useRef<number | null>(null)
   const { showToast } = useToast()
 
@@ -1044,6 +1045,11 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
       return
     }
 
+    if (shouldSkipNextRemoteSaveRef.current) {
+      shouldSkipNextRemoteSaveRef.current = false
+      return
+    }
+
     if (remoteSaveTimerRef.current) {
       window.clearTimeout(remoteSaveTimerRef.current)
     }
@@ -1088,6 +1094,7 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
         const nextStore = mergeRemoteProfileAvatar(storeRef.current, remoteState)
 
         if (nextStore !== storeRef.current) {
+          shouldSkipNextRemoteSaveRef.current = true
           commitStore(() => nextStore)
         }
       } catch {
