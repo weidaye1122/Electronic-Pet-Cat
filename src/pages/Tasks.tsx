@@ -4,30 +4,81 @@ import { TaskCard } from '../components/TaskCard'
 import { usePetStore } from '../hooks/usePetStore'
 
 export const Tasks = () => {
-  const { tasks, taskStats, markTaskDone, claimTaskReward, addCustomTask } = usePetStore()
+  const {
+    tasks,
+    taskStats,
+    markTaskDone,
+    claimTaskReward,
+    addCustomTask,
+    updateCustomTask,
+    deleteCustomTask,
+  } = usePetStore()
   const [showCreator, setShowCreator] = useState(false)
+  const [editingTaskId, setEditingTaskId] = useState('')
+  const [managedTaskId, setManagedTaskId] = useState('')
   const [title, setTitle] = useState('')
   const [icon, setIcon] = useState('✨')
   const [points, setPoints] = useState('10')
   const [growth, setGrowth] = useState('5')
+  const isEditing = Boolean(editingTaskId)
+  const managedTask = tasks.find((task) => task.id === managedTaskId)
+
+  const resetEditor = () => {
+    setEditingTaskId('')
+    setTitle('')
+    setIcon('✨')
+    setPoints('10')
+    setGrowth('5')
+  }
+
+  const handleEditTask = (taskId: string) => {
+    const task = tasks.find((item) => item.id === taskId)
+
+    if (!task) {
+      return
+    }
+
+    setManagedTaskId('')
+    setEditingTaskId(task.id)
+    setTitle(task.title)
+    setIcon(task.icon)
+    setPoints(String(task.points))
+    setGrowth(String(task.growth))
+    setShowCreator(true)
+  }
+
+  const handleDeleteTask = (taskId: string) => {
+    setManagedTaskId('')
+    deleteCustomTask(taskId)
+
+    if (editingTaskId === taskId) {
+      resetEditor()
+      setShowCreator(false)
+    }
+  }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    addCustomTask({
+    const nextTask = {
       title,
       icon,
       points: Number(points),
       growth: Number(growth),
-    })
-
-    if (title.trim()) {
-      setTitle('')
-      setIcon('✨')
-      setPoints('10')
-      setGrowth('5')
-      setShowCreator(false)
     }
+
+    if (isEditing) {
+      updateCustomTask(editingTaskId, nextTask)
+    } else {
+      addCustomTask(nextTask)
+    }
+
+    if (!title.trim()) {
+      return
+    }
+
+    resetEditor()
+    setShowCreator(false)
   }
 
   return (
@@ -48,6 +99,7 @@ export const Tasks = () => {
               key={task.id}
               onClaim={() => claimTaskReward(task.id)}
               onComplete={() => markTaskDone(task.id)}
+              onManage={task.id.startsWith('custom-') ? () => setManagedTaskId(task.id) : undefined}
               task={task}
             />
           ))}
@@ -62,7 +114,13 @@ export const Tasks = () => {
           </div>
           <button
             className="ghost-button"
-            onClick={() => setShowCreator((current) => !current)}
+            onClick={() => {
+              if (showCreator) {
+                resetEditor()
+              }
+
+              setShowCreator((current) => !current)
+            }}
             type="button"
           >
             {showCreator ? '先收起来' : '添加自定义任务'}
@@ -115,11 +173,76 @@ export const Tasks = () => {
             </div>
 
             <button className="primary-button" type="submit">
-              添加到今日任务
+              {isEditing ? '保存任务' : '添加到今日任务'}
             </button>
+
+            {isEditing ? (
+              <button
+                className="ghost-button form-card__cancel"
+                onClick={() => {
+                  resetEditor()
+                  setShowCreator(false)
+                }}
+                type="button"
+              >
+                取消编辑
+              </button>
+            ) : null}
           </form>
         ) : null}
       </section>
+
+      {managedTask ? (
+        <div
+          className="task-manage-modal"
+          onClick={() => setManagedTaskId('')}
+          role="presentation"
+        >
+          <section
+            aria-label={`管理任务 ${managedTask.title}`}
+            aria-modal="true"
+            className="task-manage-sheet"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="task-manage-sheet__summary">
+              <span className="emoji-badge" aria-hidden="true">
+                {managedTask.icon}
+              </span>
+              <div>
+                <small>管理自定义任务</small>
+                <strong>{managedTask.title}</strong>
+              </div>
+            </div>
+
+            <div className="task-manage-sheet__actions">
+              <button
+                className="ghost-button"
+                onClick={() => handleEditTask(managedTask.id)}
+                type="button"
+              >
+                编辑
+              </button>
+
+              <button
+                className="ghost-button ghost-button--danger"
+                onClick={() => handleDeleteTask(managedTask.id)}
+                type="button"
+              >
+                删除
+              </button>
+            </div>
+
+            <button
+              className="ghost-button task-manage-sheet__cancel"
+              onClick={() => setManagedTaskId('')}
+              type="button"
+            >
+              取消
+            </button>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }

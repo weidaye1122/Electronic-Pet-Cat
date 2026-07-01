@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+import type { MouseEvent, PointerEvent } from 'react'
 import { PointIcon } from './PointIcon'
 import type { Task } from '../types'
 
@@ -5,9 +7,19 @@ type TaskCardProps = {
   task: Task
   onComplete: () => void
   onClaim: () => void
+  onManage?: () => void
 }
 
-export const TaskCard = ({ task, onComplete, onClaim }: TaskCardProps) => {
+export const TaskCard = ({
+  task,
+  onComplete,
+  onClaim,
+  onManage,
+}: TaskCardProps) => {
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null)
+  const didLongPressRef = useRef(false)
+  const canManage = Boolean(onManage)
   const currentStatus =
     task.status === 'todo'
       ? {
@@ -42,8 +54,87 @@ export const TaskCard = ({ task, onComplete, onClaim }: TaskCardProps) => {
             onClick: onClaim,
           }
 
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  useEffect(
+    () => () => {
+      if (longPressTimerRef.current) {
+        window.clearTimeout(longPressTimerRef.current)
+      }
+    },
+    [],
+  )
+
+  const handlePointerDown = (event: PointerEvent<HTMLElement>) => {
+    if (!onManage || event.button !== 0) {
+      return
+    }
+
+    const target = event.target as HTMLElement
+
+    if (target.closest('button, input, textarea, select, a')) {
+      return
+    }
+
+    clearLongPressTimer()
+    didLongPressRef.current = false
+    longPressStartRef.current = { x: event.clientX, y: event.clientY }
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null
+      didLongPressRef.current = true
+      onManage()
+    }, 2_000)
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLElement>) => {
+    if (!longPressStartRef.current) {
+      return
+    }
+
+    const deltaX = Math.abs(event.clientX - longPressStartRef.current.x)
+    const deltaY = Math.abs(event.clientY - longPressStartRef.current.y)
+
+    if (deltaX > 10 || deltaY > 10) {
+      clearLongPressTimer()
+      longPressStartRef.current = null
+    }
+  }
+
+  const handlePointerEnd = () => {
+    clearLongPressTimer()
+    longPressStartRef.current = null
+  }
+
+  const handleClickCapture = (event: MouseEvent<HTMLElement>) => {
+    if (!didLongPressRef.current) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    didLongPressRef.current = false
+  }
+
   return (
-    <article className="task-card">
+    <article
+      className={`task-card ${canManage ? 'task-card--manageable' : ''}`}
+      onClickCapture={handleClickCapture}
+      onContextMenu={(event) => {
+        if (canManage) {
+          event.preventDefault()
+        }
+      }}
+      onPointerCancel={handlePointerEnd}
+      onPointerDown={handlePointerDown}
+      onPointerLeave={handlePointerEnd}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+    >
       <div className="task-card__header">
         <div className="task-card__title">
           <span className="emoji-badge" aria-hidden="true">

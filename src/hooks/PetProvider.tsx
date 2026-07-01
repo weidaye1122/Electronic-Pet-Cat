@@ -34,8 +34,10 @@ import {
   clearLocalAppState,
   loadLocalAppState,
   loadRemoteAppState,
+  loadSessionUnlock,
   saveLocalAppState,
   saveRemoteAppState,
+  saveSessionUnlock,
 } from '../utils/storage'
 import { PetStoreContext } from './petStoreContext'
 import type { FirstRunSetupInput, LevelUpCelebrationState } from './petStoreContext'
@@ -120,6 +122,16 @@ const getFirstAvailableConsumableItem = (
 const getConsumableEnergyCost = (item: ShopItem) =>
   item.type === 'toy' ? Math.max(0, -(item.effect?.energy ?? 0)) : 0
 const canUseConsumableItem = (pet: Pet, item: ShopItem) => pet.energy >= getConsumableEnergyCost(item)
+const shouldRestoreSessionUnlock = (meta: AppMeta) =>
+  Boolean(meta.passwordHash && loadSessionUnlock() === meta.passwordHash)
+const isCustomTask = (taskId: string) => taskId.startsWith('custom-')
+const normalizeRewardValue = (value: number, fallback: number) => {
+  if (!Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.max(1, Math.round(value))
+}
 const getNextFeedCycleItem = (current: PetStoreData) => {
   const availableFeedIds = feedAnimationOrder.filter(
     (itemId) => (current.inventory.consumables[itemId] ?? 0) > 0,
@@ -313,11 +325,18 @@ const normalizeTasksData = (tasks: Task[]) => {
   const knownIds = new Set(defaultTasks.map((task) => task.id))
   const knownTitles = new Set(defaultTasks.map((task) => task.title.trim()))
   const customTasks = tasks.filter(
-    (task) =>
-      !knownIds.has(task.id) &&
-      !legacyDefaultTaskIds.has(task.id) &&
-      !knownTitles.has(task.title.trim()) &&
-      !placeholderTaskTitles.has(task.title.trim()),
+    (task) => {
+      if (isCustomTask(task.id)) {
+        return !placeholderTaskTitles.has(task.title.trim())
+      }
+
+      return (
+        !knownIds.has(task.id) &&
+        !legacyDefaultTaskIds.has(task.id) &&
+        !knownTitles.has(task.title.trim()) &&
+        !placeholderTaskTitles.has(task.title.trim())
+      )
+    },
   )
 
   return [...normalizedDefaults, ...customTasks]
@@ -889,7 +908,6 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
     null,
   )
   const storeRef = useRef(store)
-  const didRunDailyRefreshRef = useRef(false)
   const shouldOverwriteRemoteOnHydrateRef = useRef(shouldOverwriteRemoteOnNextHydration)
   const remoteSaveTimerRef = useRef<number | null>(null)
   const levelUpCelebrationTimerRef = useRef<number | null>(null)
@@ -961,6 +979,7 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
         if (!isCancelled) {
           shouldOverwriteRemoteOnNextHydration = false
           shouldOverwriteRemoteOnHydrateRef.current = false
+          setIsSessionUnlocked(shouldRestoreSessionUnlock(storeRef.current.meta))
           setHasHydratedRemoteStore(true)
         }
       }
@@ -998,20 +1017,38 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
   }, [hasHydratedRemoteStore, store])
 
   useEffect(() => {
-    if (!hasHydratedRemoteStore || !isSessionUnlocked || didRunDailyRefreshRef.current) {
+    if (!hasHydratedRemoteStore || !isSessionUnlocked) {
       return
     }
 
-    didRunDailyRefreshRef.current = true
-    const { nextStore, messages } = applyDailyRefresh(storeRef.current)
+    const runDailyRefresh = () => {
+      const { nextStore, messages } = applyDailyRefresh(storeRef.current)
 
-    if (nextStore !== storeRef.current) {
-      commitStore(() => nextStore)
+      if (nextStore !== storeRef.current) {
+        commitStore(() => nextStore)
+      }
+
+      messages.forEach((message, index) => {
+        window.setTimeout(() => showToast(message), index * 260)
+      })
     }
 
-    messages.forEach((message, index) => {
-      window.setTimeout(() => showToast(message), index * 260)
-    })
+    runDailyRefresh()
+    const intervalId = window.setInterval(runDailyRefresh, 60_000)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runDailyRefresh()
+      }
+    }
+
+    window.addEventListener('focus', runDailyRefresh)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', runDailyRefresh)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [hasHydratedRemoteStore, isSessionUnlocked, showToast])
 
   useEffect(() => {
@@ -1210,8 +1247,8 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
 
   const addCustomTask = (task: NewTaskInput) => {
     const title = task.title.trim()
-    const points = Math.max(1, Math.round(task.points))
-    const growth = Math.max(1, Math.round(task.growth))
+    const points = normalizeRewardValue(task.points, 10)
+    const growth = normalizeRewardValue(task.growth, 5)
 
     if (!title) {
       showToast('先给新任务起个名字吧。')
@@ -1234,6 +1271,74 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
     }))
 
     showToast(`新任务“${title}”已经加进今日任务啦！`)
+  }
+
+  const updateCustomTask = (taskId: string, task: NewTaskInput) => {
+    if (!isCustomTask(taskId)) {
+      return
+    }
+
+    const title = task.title.trim()
+    const points = normalizeRewardValue(task.points, 10)
+    const growth = normalizeRewardValue(task.growth, 5)
+
+    if (!title) {
+      showToast('任务名称不能为空哦。')
+      return
+    }
+
+    commitStore((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) =>
+        item.id === taskId
+          ? {
+              ...item,
+              title,
+              icon: task.icon?.trim() || '✨',
+              points,
+              growth,
+            }
+          : item,
+      ),
+    }))
+
+    showToast(`任务“${title}”已经更新啦！`)
+  }
+
+  const deleteCustomTask = (taskId: string) => {
+    if (!isCustomTask(taskId)) {
+      return
+    }
+
+    const task = storeRef.current.tasks.find((item) => item.id === taskId)
+
+    commitStore((current) => ({
+      ...current,
+      tasks: current.tasks.filter((item) => item.id !== taskId),
+    }))
+
+    showToast(task ? `任务“${task.title}”已经删除啦。` : '任务已经删除啦。')
+  }
+
+  const resetCustomTaskStatus = (taskId: string) => {
+    if (!isCustomTask(taskId)) {
+      return
+    }
+
+    const task = storeRef.current.tasks.find((item) => item.id === taskId)
+
+    if (!task || task.status === 'todo') {
+      return
+    }
+
+    commitStore((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) =>
+        item.id === taskId ? { ...item, status: 'todo' as const } : item,
+      ),
+    }))
+
+    showToast(`任务“${task.title}”可以重新做啦！`)
   }
 
   const purchaseItem = (itemId: string) => {
@@ -1445,11 +1550,13 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
         userName,
       }),
     }))
+    saveSessionUnlock(passwordHash)
     setIsSessionUnlocked(true)
     showToast('小家已经准备好啦！')
   }
 
   const unlockSession = () => {
+    saveSessionUnlock(storeRef.current.meta.passwordHash ?? '')
     setIsSessionUnlocked(true)
   }
 
@@ -1529,6 +1636,9 @@ export const PetProvider = ({ children }: { children: ReactNode }) => {
         markTaskDone,
         claimTaskReward,
         addCustomTask,
+        updateCustomTask,
+        deleteCustomTask,
+        resetCustomTaskStatus,
         purchaseItem,
         applyInventoryItem,
         consumeNextFeedAnimation,

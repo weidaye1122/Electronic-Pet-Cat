@@ -265,6 +265,16 @@ a {
   line-height: 1.5;
 }
 
+.auth-copy__description--stacked {
+  display: grid;
+  gap: 2px;
+}
+
+.auth-copy__description--stacked span {
+  display: block;
+  white-space: nowrap;
+}
+
 .auth-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -292,15 +302,20 @@ a {
   font-size: 0.92rem;
 }
 
-.password-display input {
-  position: absolute;
-  inset: 26px 0 0;
-  opacity: 0;
+.password-display__control {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .password-display strong {
   display: flex;
   align-items: center;
+  width: 100%;
   min-height: 48px;
   padding: 12px 14px;
   border-radius: 14px;
@@ -308,8 +323,14 @@ a {
   background: rgba(255, 255, 255, 0.92);
   color: var(--color-text);
   font-size: 1.15rem;
-  letter-spacing: 0.14em;
+  letter-spacing: 0;
   overflow: hidden;
+}
+
+.password-display__control:focus-visible strong,
+.password-display__control[aria-pressed='true'] strong {
+  border-color: var(--color-primary-deep);
+  box-shadow: 0 0 0 3px rgba(238, 143, 39, 0.18);
 }
 
 .number-pad {
@@ -1299,6 +1320,12 @@ a {
   color: var(--color-text);
 }
 
+.ghost-button--danger {
+  border-color: rgba(201, 81, 68, 0.34);
+  background: rgba(255, 240, 237, 0.82);
+  color: #b8463c;
+}
+
 .growth-map {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1369,6 +1396,87 @@ a {
 
 .task-card__actions--single {
   grid-template-columns: 1fr;
+}
+
+.task-card--manageable {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.task-manage-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(75, 63, 53, 0.24);
+  backdrop-filter: blur(5px);
+}
+
+.task-manage-sheet {
+  width: min(92vw, 360px);
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  background: rgba(255, 253, 248, 0.96);
+  box-shadow: 0 24px 54px rgba(75, 63, 53, 0.22);
+}
+
+.task-manage-sheet__summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.task-manage-sheet__summary .emoji-badge {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  font-size: 1.8rem;
+}
+
+.task-manage-sheet__summary div {
+  min-width: 0;
+}
+
+.task-manage-sheet__summary small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-muted);
+}
+
+.task-manage-sheet__summary strong {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 1.2rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-manage-sheet__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.task-manage-sheet__actions .ghost-button,
+.task-manage-sheet__cancel {
+  width: 100%;
+  min-height: 48px;
+}
+
+.task-manage-sheet__cancel {
+  margin-top: 10px;
+}
+
+.form-card__cancel {
+  width: 100%;
+  margin-top: 10px;
 }
 
 .empty-card {

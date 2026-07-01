@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { usePetStore } from '../hooks/usePetStore'
 import { createPasswordSalt, hashNumericPassword, normalizeNumericPassword } from '../utils/auth'
 
@@ -35,16 +35,16 @@ export const AuthGate = () => {
     setUserName(meta.userName)
   }, [meta.userName])
 
-  const updateActivePassword = (updater: (current: string) => string) => {
+  const updateActivePassword = useCallback((updater: (current: string) => string) => {
     if (!isSetupMode || activePasswordField === 'primary') {
       setPassword((current) => normalizeNumericPassword(updater(current)))
       return
     }
 
     setConfirmPassword((current) => normalizeNumericPassword(updater(current)))
-  }
+  }, [activePasswordField, isSetupMode])
 
-  const handleKeypadPress = (key: string) => {
+  const handleKeypadPress = useCallback((key: string) => {
     setErrorText('')
 
     if (key === '清空') {
@@ -58,9 +58,9 @@ export const AuthGate = () => {
     }
 
     updateActivePassword((current) => `${current}${key}`)
-  }
+  }, [updateActivePassword])
 
-  const handleSetup = async () => {
+  const handleSetup = useCallback(async () => {
     const nextPetName = petName.trim()
     const nextUserName = userName.trim()
 
@@ -89,9 +89,9 @@ export const AuthGate = () => {
       userName: nextUserName,
     })
     setIsSubmitting(false)
-  }
+  }, [completeFirstRunSetup, confirmPassword, password, petName, userName])
 
-  const handleLogin = async () => {
+  const handleLogin = useCallback(async () => {
     if (!meta.passwordHash || !meta.passwordSalt) {
       return
     }
@@ -107,11 +107,70 @@ export const AuthGate = () => {
     }
 
     unlockSession()
-  }
+  }, [meta.passwordHash, meta.passwordSalt, password, unlockSession])
 
-  const handleSubmit = () => {
+  const handleSubmit = useCallback(() => {
     void (isSetupMode ? handleSetup() : handleLogin())
-  }
+  }, [handleLogin, handleSetup, isSetupMode])
+
+  useEffect(() => {
+    if (!isStoreReady || isSubmitting) {
+      return
+    }
+
+    const handleKeyboardInput = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable
+      ) {
+        return
+      }
+
+      if (
+        target instanceof HTMLButtonElement &&
+        (target.classList.contains('number-key') || target.classList.contains('auth-submit'))
+      ) {
+        return
+      }
+
+      if (/^\d$/.test(event.key)) {
+        event.preventDefault()
+        handleKeypadPress(event.key)
+        return
+      }
+
+      if (event.key === 'Backspace') {
+        event.preventDefault()
+        handleKeypadPress('退格')
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        handleKeypadPress('清空')
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        handleSubmit()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyboardInput)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyboardInput)
+    }
+  }, [
+    handleKeypadPress,
+    handleSubmit,
+    isStoreReady,
+    isSubmitting,
+  ])
 
   if (isSessionUnlocked) {
     return null
@@ -133,10 +192,15 @@ export const AuthGate = () => {
         <div className="auth-copy">
           <p className="eyebrow">小猫成长记</p>
           <h1>{isStoreReady ? (isSetupMode ? '第一次见面' : '欢迎回来') : '正在准备'}</h1>
-          <p>
+          <p className={isStoreReady && isSetupMode ? 'auth-copy__description--stacked' : ''}>
             {isStoreReady
               ? isSetupMode
-                ? '先给小猫和自己起个名字，再设置一个数字密码。'
+                ? (
+                    <>
+                      <span>先给小猫和自己起个名字</span>
+                      <span>再设置一个数字密码</span>
+                    </>
+                  )
                 : '输入数字密码，就可以继续陪小猫成长。'
               : '正在读取存档，请稍等一下。'}
           </p>
@@ -173,38 +237,40 @@ export const AuthGate = () => {
             ) : null}
 
             <div className="password-fields">
-              <label className="password-display">
+              <div className="password-display">
                 <span>{isSetupMode ? '设置密码' : '输入密码'}</span>
-                <input
-                  inputMode="numeric"
-                  onChange={(event) => {
+                <button
+                  aria-label={isSetupMode ? '设置密码' : '输入密码'}
+                  aria-pressed={activePasswordField === 'primary'}
+                  className="password-display__control"
+                  onClick={() => {
+                    setActivePasswordField('primary')
                     setErrorText('')
-                    setPassword(normalizeNumericPassword(event.target.value))
                   }}
-                  onFocus={() => setActivePasswordField('primary')}
-                  pattern="[0-9]*"
-                  type="password"
-                  value={password}
-                />
-                <strong aria-hidden="true">{maskPassword(password) || '----'}</strong>
-              </label>
+                  type="button"
+                >
+                  <strong aria-hidden="true">{maskPassword(password) || '----'}</strong>
+                </button>
+              </div>
 
               {isSetupMode ? (
-                <label className="password-display">
+                <div className="password-display">
                   <span>再输一次</span>
-                  <input
-                    inputMode="numeric"
-                    onChange={(event) => {
+                  <button
+                    aria-label="再输一次密码"
+                    aria-pressed={activePasswordField === 'confirm'}
+                    className="password-display__control"
+                    onClick={() => {
+                      setActivePasswordField('confirm')
                       setErrorText('')
-                      setConfirmPassword(normalizeNumericPassword(event.target.value))
                     }}
-                    onFocus={() => setActivePasswordField('confirm')}
-                    pattern="[0-9]*"
-                    type="password"
-                    value={confirmPassword}
-                  />
-                  <strong aria-hidden="true">{maskPassword(confirmPassword) || '----'}</strong>
-                </label>
+                    type="button"
+                  >
+                    <strong aria-hidden="true">
+                      {maskPassword(confirmPassword) || '----'}
+                    </strong>
+                  </button>
+                </div>
               ) : null}
             </div>
 

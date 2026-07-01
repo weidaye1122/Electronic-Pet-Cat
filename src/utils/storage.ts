@@ -15,6 +15,7 @@ export const storageKeys = {
   inventory: 'inventory-data',
   pointRecords: 'point-records',
   meta: 'pet-meta-data',
+  sessionUnlock: 'pet-session-unlock',
 } as const
 
 const persistenceApiPath = import.meta.env.VITE_PERSISTENCE_API_PATH || '/api/state'
@@ -66,6 +67,31 @@ export const clearLocalAppState = () => {
   Object.values(storageKeys).forEach((key) => {
     window.localStorage.removeItem(key)
   })
+  clearSessionUnlock()
+}
+
+export const loadSessionUnlock = () => {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  return window.sessionStorage.getItem(storageKeys.sessionUnlock) ?? ''
+}
+
+export const saveSessionUnlock = (passwordHash: string) => {
+  if (typeof window === 'undefined' || !passwordHash) {
+    return
+  }
+
+  window.sessionStorage.setItem(storageKeys.sessionUnlock, passwordHash)
+}
+
+export const clearSessionUnlock = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.sessionStorage.removeItem(storageKeys.sessionUnlock)
 }
 
 export const loadRemoteAppState = async () => {
