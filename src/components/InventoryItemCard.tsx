@@ -59,7 +59,13 @@ export const InventoryItemCard = ({
         </span>
       </div>
 
-      <button className="secondary-button shop-card__button" disabled={disabled} onClick={onUse} type="button">
+      <button
+        className="secondary-button shop-card__button"
+        data-feedback-kind="inventoryUse"
+        disabled={disabled}
+        onClick={onUse}
+        type="button"
+      >
         {disabled ? disabledLabel : labelMap[item.type]}
       </button>
     </article>

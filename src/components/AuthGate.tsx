@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { usePetStore } from '../hooks/usePetStore'
 import { createPasswordSalt, hashNumericPassword, normalizeNumericPassword } from '../utils/auth'
+import { playInteractionFeedback } from '../utils/interactionFeedback'
 
 type PasswordField = 'confirm' | 'primary'
 
@@ -138,24 +139,28 @@ export const AuthGate = () => {
 
       if (/^\d$/.test(event.key)) {
         event.preventDefault()
+        playInteractionFeedback('password')
         handleKeypadPress(event.key)
         return
       }
 
       if (event.key === 'Backspace') {
         event.preventDefault()
+        playInteractionFeedback('password')
         handleKeypadPress('退格')
         return
       }
 
       if (event.key === 'Escape') {
         event.preventDefault()
+        playInteractionFeedback('password')
         handleKeypadPress('清空')
         return
       }
 
       if (event.key === 'Enter') {
         event.preventDefault()
+        playInteractionFeedback('button')
         handleSubmit()
       }
     }
@@ -272,6 +277,7 @@ export const AuthGate = () => {
               {keypadKeys.map((key) => (
                 <button
                   className={key.length === 1 ? 'number-key' : 'number-key number-key--utility'}
+                  data-feedback-kind="password"
                   key={key}
                   onClick={() => handleKeypadPress(key)}
                   type="button"

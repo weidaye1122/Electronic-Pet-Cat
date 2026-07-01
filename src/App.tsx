@@ -17,6 +17,10 @@ import { Home } from './pages/Home'
 import { Inventory } from './pages/Inventory'
 import { Shop } from './pages/Shop'
 import { Tasks } from './pages/Tasks'
+import {
+  isInteractionFeedbackKind,
+  playInteractionFeedback,
+} from './utils/interactionFeedback'
 
 const AVATAR_OUTPUT_SIZE = 512
 const AVATAR_INITIAL_CROP_RATIO = 0.82
@@ -121,6 +125,42 @@ function AppLayout() {
   useEffect(() => {
     document.title = `${titleName}成长记`
   }, [titleName])
+
+  useEffect(() => {
+    const handleGlobalClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      const interactiveElement = target?.closest<HTMLElement>(
+        'button, a, [role="button"], [data-feedback-kind]',
+      )
+
+      if (!interactiveElement) {
+        return
+      }
+
+      if (
+        interactiveElement.getAttribute('aria-disabled') === 'true' ||
+        (interactiveElement instanceof HTMLButtonElement && interactiveElement.disabled)
+      ) {
+        return
+      }
+
+      const feedbackKind = interactiveElement.dataset.feedbackKind
+
+      if (feedbackKind === 'none') {
+        return
+      }
+
+      playInteractionFeedback(
+        isInteractionFeedbackKind(feedbackKind) ? feedbackKind : 'button',
+      )
+    }
+
+    window.addEventListener('click', handleGlobalClick, { capture: true })
+
+    return () => {
+      window.removeEventListener('click', handleGlobalClick, { capture: true })
+    }
+  }, [])
 
   if (!isStoreReady || !isSessionUnlocked) {
     return <AuthGate />

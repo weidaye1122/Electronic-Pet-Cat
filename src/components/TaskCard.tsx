@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { MouseEvent, PointerEvent } from 'react'
 import { PointIcon } from './PointIcon'
 import type { Task } from '../types'
+import { playInteractionFeedback } from '../utils/interactionFeedback'
 
 type TaskCardProps = {
   task: Task
@@ -87,6 +88,7 @@ export const TaskCard = ({
     longPressTimerRef.current = window.setTimeout(() => {
       longPressTimerRef.current = null
       didLongPressRef.current = true
+      playInteractionFeedback('longPress')
       onManage()
     }, 2_000)
   }

@@ -85,10 +85,10 @@ export const Home = () => {
 
       <section className="home-actions-strip">
         <div className="button-grid home-actions-grid">
-          <ActionButton disabled={!canFeed} icon="🐟" label="喂一喂" onClick={() => performCareAction('feed')} variant="soft" />
-          <ActionButton disabled={!canWash} icon="🛁" label="洗一洗" onClick={() => performCareAction('wash')} variant="secondary" />
-          <ActionButton disabled={!canPlay} icon="🧶" label="玩一玩" onClick={() => performCareAction('play')} variant="soft" />
-          <ActionButton disabled={isSleeping} icon="😴" label="睡一觉" onClick={() => performCareAction('sleep')} variant="secondary" />
+          <ActionButton disabled={!canFeed} feedbackKind="careAction" icon="🐟" label="喂一喂" onClick={() => performCareAction('feed')} variant="soft" />
+          <ActionButton disabled={!canWash} feedbackKind="careAction" icon="🛁" label="洗一洗" onClick={() => performCareAction('wash')} variant="secondary" />
+          <ActionButton disabled={!canPlay} feedbackKind="careAction" icon="🧶" label="玩一玩" onClick={() => performCareAction('play')} variant="soft" />
+          <ActionButton disabled={isSleeping} feedbackKind="careAction" icon="😴" label="睡一觉" onClick={() => performCareAction('sleep')} variant="secondary" />
         </div>
       </section>
     </div>

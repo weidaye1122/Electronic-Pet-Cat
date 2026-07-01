@@ -1,6 +1,7 @@
-import { useEffect, useEffectEvent, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { SLEEP_DURATION_MS } from '../data/petTimings'
 import type { FeedAnimationId, Pet } from '../types'
+import { playInteractionFeedback } from '../utils/interactionFeedback'
 
 type PetCardProps = {
   feedAnimationQueue?: FeedAnimationId[]
@@ -203,6 +204,7 @@ const AnimatedPetArt = ({
   const [feedPlaybackIndex, setFeedPlaybackIndex] = useState(0)
   const [completedFeedToken, setCompletedFeedToken] = useState('')
   const [preparedFeedToken, setPreparedFeedToken] = useState('')
+  const announcedFeedTokenRef = useRef('')
 
   const activeFeedAnimationId = !isSleeping ? feedAnimationQueue[0] : undefined
   const activeFeedSteps = activeFeedAnimationId
@@ -338,7 +340,36 @@ const AnimatedPetArt = ({
     setFeedPlaybackIndex(0)
     setCompletedFeedToken('')
     setPreparedFeedToken(activeFeedToken)
+
+    if (!activeFeedToken) {
+      announcedFeedTokenRef.current = ''
+    }
   }, [activeFeedToken])
+
+  useEffect(() => {
+    if (
+      isSleeping ||
+      !activeFeedAnimationId ||
+      !hasLoadedActiveFeedSteps ||
+      !activeFeedSteps.length ||
+      preparedFeedToken !== activeFeedToken ||
+      completedFeedToken === activeFeedToken ||
+      announcedFeedTokenRef.current === activeFeedToken
+    ) {
+      return
+    }
+
+    announcedFeedTokenRef.current = activeFeedToken
+    playInteractionFeedback('cat')
+  }, [
+    activeFeedAnimationId,
+    activeFeedSteps.length,
+    activeFeedToken,
+    completedFeedToken,
+    hasLoadedActiveFeedSteps,
+    isSleeping,
+    preparedFeedToken,
+  ])
 
   useEffect(() => {
     if (isSleeping || activeFeedAnimationId) {
